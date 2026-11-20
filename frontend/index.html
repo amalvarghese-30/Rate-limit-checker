@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rate Limit Checker</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --border-focus: #0f172a;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --ok: #10b981;
+      --ok-bg: #ecfdf5;
+      --ok-text: #065f46;
+      --warn: #f59e0b;
+      --warn-bg: #fffbeb;
+      --warn-text: #92400e;
+      --bad: #ef4444;
+      --bad-bg: #fef2f2;
+      --bad-text: #991b1b;
+      --info-bg: #eff6ff;
+      --info-text: #1e40af;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px 16px 80px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .container { max-width: 960px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-icon {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: #0f172a; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 15px;
+    }
+    h1 { font-size: 20px; font-weight: 600; margin: 0; }
+    .subtitle { font-size: 13px; color: var(--muted); }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .stat-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .stat-label { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+    .stat-val { font-size: 20px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .stat-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .notice-bar {
+      font-size: 12px;
+      color: #475569;
+      background: #f1f5f9;
+      border-left: 3px solid #64748b;
+      padding: 8px 12px;
+      border-radius: 4px;
+      margin-bottom: 14px;
+    }
+
+    form {
+      display: grid;
+      grid-template-columns: 2fr 90px 105px 105px 85px auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    @media (max-width: 860px) {
+      form { grid-template-columns: 1fr 1fr; }
+      .url-field, button[type="submit"] { grid-column: 1 / -1; }
+    }
+
+    label { display: block; font-size: 11.5px; font-weight: 500; color: var(--muted); margin-bottom: 5px; }
+
+    input[type="url"], input[type="number"], select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fff;
+      color: var(--text);
+      font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--border-focus); }
+
+    button {
+      padding: 9px 16px;
+      background: #0f172a;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      height: 38px;
+      transition: background 0.15s;
+    }
+    button:hover { background: #1e293b; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      height: auto;
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+    .btn-ghost:hover { background: #f8fafc; }
+
+    .btn-danger {
+      background: #fff;
+      color: var(--bad);
+      border: 1px solid #fecaca;
+      height: auto;
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+    .btn-danger:hover { background: var(--bad-bg); }
+
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid #f1f5f9;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .presets, .checks { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .preset-btn {
+      background: #f1f5f9;
+      color: #334155;
+      border: none;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      height: auto;
+      cursor: pointer;
+    }
+    .preset-btn:hover { background: #e2e8f0; }
+
+    .status-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    .pulse {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #2563eb; display: inline-block;
+      margin-right: 8px; animation: blink 1s infinite;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+    .live-counters {
+      display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
+      font-size: 12px; color: var(--muted);
+    }
+    .live-counter-val { font-weight: 700; color: var(--text); }
+
+    .error-box {
+      color: var(--bad-text);
+      background: var(--bad-bg);
+      border: 1px solid #fecaca;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .hidden { display: none !important; }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .section-title {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 0;
+    }
+
+    .guide-summary {
+      font-size: 14px;
+      font-weight: 500;
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      background: #f8fafc;
+      border-left: 3px solid #0f172a;
+      border-radius: 4px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: #fff;
+    }
+    .metric-label { font-size: 11.5px; color: var(--muted); }
+    .metric-value { font-size: 19px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .metric-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .pattern-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: #f1f5f9;
+      color: var(--text);
+    }
+
+    .pattern-desc { font-size: 13.5px; color: #334155; margin: 0 0 14px; }
+
+    .evidence-list {
+      margin: 0 0 14px;
+      padding-left: 20px;
+      font-size: 12.5px;
+      color: #475569;
+    }
+    .evidence-list li { margin-bottom: 4px; }
+
+    .timeline { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+    .dot {
+      width: 24px; height: 24px; border-radius: 4px;
+      font-size: 10px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; cursor: default;
+    }
+    .dot-ok { background: var(--ok); }
+    .dot-warn { background: var(--warn); }
+    .dot-bad { background: var(--bad); }
+
+    .legend {
+      display: flex; gap: 14px; font-size: 11.5px; color: var(--muted);
+      margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+    .sparkline-wrap {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #ffffff;
+      margin-bottom: 14px;
+    }
+
+    pre {
+      margin: 0; padding: 12px;
+      background: #f8fafc; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 12px;
+      overflow-x: auto; line-height: 1.45;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    th { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; }
+    tr:last-child td { border-bottom: none; }
+
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px;
+      border-radius: 999px; font-size: 11px; font-weight: 500;
+    }
+    .badge-ok { background: var(--ok-bg); color: var(--ok-text); }
+    .badge-warn { background: var(--warn-bg); color: var(--warn-text); }
+    .badge-bad { background: var(--bad-bg); color: var(--bad-text); }
+    .badge-info { background: var(--info-bg); color: var(--info-text); }
+
+    .history-item {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 10px 4px;
+      border-bottom: 1px solid #f1f5f9; font-size: 13px;
+    }
+    .history-item:last-child { border-bottom: none; }
+    .history-url { font-weight: 600; color: #1e293b; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .history-url:hover { color: var(--accent); }
+
+    .log-box {
+      max-height: 140px; overflow-y: auto; background: #0f172a; color: #e2e8f0;
+      padding: 10px 12px; border-radius: 6px; font-family: monospace; font-size: 11.5px;
+      margin-top: 10px;
+    }
+    .log-line { margin-bottom: 3px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-icon">RL</div>
+        <div>
+          <h1>Rate Limit Checker</h1>
+          <div class="subtitle">Multi-phase rate-limit discovery, recovery timing &amp; adaptive client generator</div>
+        </div>
+      </div>
+      <div id="health-indicator" class="badge badge-ok">Engine Online v2.0.0</div>
+    </header>
+
+    <!-- Global Stats Dashboard -->
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-label">Total Analyses</div>
+        <div class="stat-val" id="stat-total">0</div>
+        <div class="stat-sub">completed runs</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Success Rate</div>
+        <div class="stat-val" id="stat-success">0%</div>
+        <div class="stat-sub">verified / clean passes</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Total Tested</div>
+        <div class="stat-val" id="stat-probes">0</div>
+        <div class="stat-sub">requests evaluated</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Blocked / Throttled</div>
+        <div class="stat-val" id="stat-blocked">0</div>
+        <div class="stat-sub">confirmed 429s/walls</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Avg Safe Interval</div>
+        <div class="stat-val" id="stat-interval">0.0s</div>
+        <div class="stat-sub">recommended pacing</div>
+      </div>
+    </div>
+
+    <!-- Analysis Form Card -->
+    <div class="card">
+      <div class="notice-bar">
+        <strong>Permission Notice:</strong> All probing is strictly bounded and non-destructive. Ensure you own or have explicit authorization to test target APIs.
+      </div>
+
+      <form id="check-form">
+        <div class="url-field">
+          <label for="url">Target URL (HTTP/HTTPS)</label>
+          <input id="url" type="url" placeholder="https://api.github.com/zen or http://127.0.0.1:8001/fixed-window" required />
+        </div>
+        <div>
+          <label for="method">Method</label>
+          <select id="method">
+            <option value="GET">GET</option>
+            <option value="HEAD">HEAD</option>
+          </select>
+        </div>
+        <div>
+          <label for="maxRequests">Budget (3-100)</label>
+          <input id="maxRequests" type="number" min="3" max="100" value="15" required />
+        </div>
+        <div>
+          <label for="interval">Delay / Int (s)</label>
+          <input id="interval" type="number" min="0.05" max="10" step="0.05" value="0.3" required />
+        </div>
+        <div>
+          <label for="burstSize">Burst Size</label>
+          <input id="burstSize" type="number" min="1" max="20" value="3" required />
+        </div>
+        <button id="submit-btn" type="submit">Analyze</button>
+      </form>
+
+      <div class="controls-row">
+        <div class="presets">
+          <span>Presets:</span>
+          <button type="button" class="preset-btn" onclick="applyPreset(5, 0.5, 1)">Gentle (5 req, 0.5s)</button>
+          <button type="button" class="preset-btn" onclick="applyPreset(15, 0.3, 3)">Real-World Safe (15 req, 0.3s)</button>
+          <button type="button" class="preset-btn" onclick="applyPreset(25, 0.15, 5)">Balanced (25 req, 0.15s)</button>
+          <button type="button" class="preset-btn" onclick="applyPreset(35, 0.05, 6)">Local Stress (35 req, 50ms)</button>
+        </div>
+        <div class="checks">
+          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input id="cooldown" type="checkbox" checked /> Cooldown Check
+          </label>
+          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input id="verify" type="checkbox" checked /> Verify Safe Pace
+          </label>
+          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input id="robots" type="checkbox" checked /> robots.txt
+          </label>
+        </div>
+      </div>
+
+      <details style="margin-top: 14px;">
+        <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text);">Custom Headers (Authorization &amp; API Keys)</summary>
+        <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+          <span style="font-size: 11.5px; color: var(--muted);">Quick Insert:</span>
+          <button type="button" class="preset-btn" onclick="setHeaderTemplate('bearer')">+ Bearer Token</button>
+          <button type="button" class="preset-btn" onclick="setHeaderTemplate('apikey')">+ X-API-Key</button>
+          <button type="button" class="preset-btn" onclick="setHeaderTemplate('clear')">Clear</button>
+        </div>
+        <textarea id="customHeaders" rows="3" style="margin-top:8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;" placeholder='{
+  "Authorization": "Bearer <YOUR_TOKEN>"
+}'></textarea>
+        <div style="font-size: 11.5px; color: var(--muted); margin-top: 4px;">
+          Headers are sanitized for security. Sensitive tokens are masked in profiles and reports.
+        </div>
+      </details>
+    </div>
+
+    <!-- Live Execution Status Bar -->
+    <div id="status-bar" class="status-bar">
+      <div>
+        <span class="pulse"></span>
+        <strong id="status-phase">INIT:</strong> <span id="status-text">Starting...</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="mono" id="status-count">0 probes</span>
+        <button type="button" class="btn-danger" id="cancel-btn" onclick="cancelCurrentJob()">Cancel</button>
+      </div>
+    </div>
+
+    <div id="error-box" class="error-box"></div>
+
+    <!-- Live Probe Activity Card -->
+    <div id="live-card" class="card hidden">
+      <div class="section-head">
+        <div class="section-title">Live Probe Activity</div>
+        <span id="live-time" class="mono" style="font-size:12px; color:var(--muted);">0.0s elapsed</span>
+      </div>
+      <div class="live-counters">
+        <span>Sent: <span class="live-counter-val" id="cnt-sent">0</span></span>
+        <span>Accepted: <span class="live-counter-val" style="color:var(--ok);" id="cnt-ok">0</span></span>
+        <span>Confirmed 429: <span class="live-counter-val" style="color:var(--bad);" id="cnt-429">0</span></span>
+        <span>Throttled (Latency): <span class="live-counter-val" style="color:var(--warn);" id="cnt-slow">0</span></span>
+        <span>Network/DNS Errors: <span class="live-counter-val" style="color:#64748b;" id="cnt-net">0</span></span>
+      </div>
+      <div class="timeline" id="live-timeline"></div>
+      <div class="log-box" id="live-log"></div>
+    </div>
+
+    <!-- Completed Analysis Results View -->
+    <div id="results" class="hidden">
+      <!-- Frequency Blueprint Card -->
+      <div class="card">
+        <div class="section-head">
+          <div class="section-title">Safe Frequency &amp; Burst Blueprint</div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn-ghost" id="btn-export">Export JSON Profile</button>
+            <button type="button" class="btn-ghost" id="btn-copy-code">Copy Python Client</button>
+          </div>
+        </div>
+        <div class="guide-summary" id="m-summary">-</div>
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric-label">Safe Burst Capacity</div>
+            <div class="metric-value" id="m-burst">-</div>
+            <div class="metric-sub">max requests together</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Recommended Interval</div>
+            <div class="metric-value" id="m-interval">-</div>
+            <div class="metric-sub" id="m-rps">- req/sec</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Recommended Rate / Min</div>
+            <div class="metric-value" id="m-rpm">-</div>
+            <div class="metric-sub" id="m-verify">unverified</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Observed Cooldown</div>
+            <div class="metric-value" id="m-cooldown">-</div>
+            <div class="metric-sub" id="m-blocked">- blocked</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rate-Limiting Behavior & Evidence Card -->
+      <div class="card">
+        <div class="section-head">
+          <div class="section-title">Rate-Limit Behavior &amp; Evidence</div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <span class="pattern-tag" id="m-pattern">-</span>
+            <span class="badge" id="m-confidence">-</span>
+          </div>
+        </div>
+        <p class="pattern-desc" id="m-explanation">-</p>
+
+        <div style="margin-bottom: 12px;">
+          <div style="font-size: 11.5px; font-weight:600; color:var(--muted); text-transform:uppercase; margin-bottom: 4px;">Supporting Evidence:</div>
+          <ul class="evidence-list" id="m-evidence"></ul>
+        </div>
+
+        <div class="timeline" id="timeline"></div>
+        <div class="legend">
+          <span><i style="background: var(--ok);"></i> Accepted (2xx/3xx)</span>
+          <span><i style="background: var(--warn);"></i> Throttled / High Latency</span>
+          <span><i style="background: var(--bad);"></i> Rate Limited (429/WAF)</span>
+          <span id="m-robots-note" class="mono" style="margin-left:auto;"></span>
+        </div>
+
+        <!-- Latency Trend Sparkline -->
+        <div class="sparkline-wrap">
+          <div class="section-head" style="margin-bottom:6px;">
+            <div class="section-title">Latency Trend (ms)</div>
+            <div class="mono" id="m-latency-stats" style="color: var(--muted); font-size:11.5px;">-</div>
+          </div>
+          <svg id="sparkline" width="100%" height="64" viewBox="0 0 600 64" preserveAspectRatio="none"></svg>
+        </div>
+
+        <details>
+          <summary style="font-size:12px; color:var(--muted); cursor:pointer;">View Observed Rate-Limit Headers</summary>
+          <pre id="m-headers" style="margin-top:8px;">{}</pre>
+        </details>
+      </div>
+
+      <!-- Detailed Probe Log Table (Collapsible) -->
+      <div class="card" style="padding: 0; overflow-x: auto;">
+        <div style="padding: 14px 16px 10px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border);">
+          <div class="section-title" style="margin:0;">Detailed Probe Log</div>
+          <select id="log-filter" style="width:auto; padding:4px 8px; font-size:12px;">
+            <option value="all">All Probes</option>
+            <option value="blocked">Rate Limited Only</option>
+            <option value="throttled">Slow / Throttled Only</option>
+            <option value="errors">Errors / Failures</option>
+          </select>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Phase</th>
+              <th>Elapsed</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Result</th>
+              <th>Reason &amp; Retry-After</th>
+            </tr>
+          </thead>
+          <tbody id="probe-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- History Card -->
+    <div class="card" id="history-card">
+      <div class="section-head">
+        <div class="section-title">Saved Analysis History</div>
+        <button type="button" class="btn-ghost" onclick="loadHistory()">Refresh History</button>
+      </div>
+      <div id="history-list" style="color: var(--muted); font-size: 13px;">Loading history...</div>
+    </div>
+  </div>
+
+  <script>
+    let currentResult = null;
+    let activeJobId = null;
+
+    function applyPreset(reqs, interval, burst) {
+      document.getElementById("maxRequests").value = reqs;
+      document.getElementById("interval").value = interval;
+      document.getElementById("burstSize").value = burst;
+    }
+
+    function setHeaderTemplate(type) {
+      const el = document.getElementById("customHeaders");
+      if (type === 'bearer') {
+        el.value = JSON.stringify({ "Authorization": "Bearer <YOUR_TOKEN>" }, null, 2);
+      } else if (type === 'apikey') {
+        el.value = JSON.stringify({ "X-API-Key": "<YOUR_API_KEY>" }, null, 2);
+      } else if (type === 'clear') {
+        el.value = "";
+      }
+      el.focus();
+    }
+
+    async function fetchStats() {
+      try {
+        const res = await fetch("/api/stats");
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById("stat-total").textContent = d.total_analyses;
+        document.getElementById("stat-success").textContent = `${d.success_rate_pct}%`;
+        document.getElementById("stat-probes").textContent = d.total_requests_tested;
+        document.getElementById("stat-blocked").textContent = d.total_blocked_requests;
+        document.getElementById("stat-interval").textContent = `${d.avg_interval_sec}s`;
+      } catch {}
+    }
+
+    async function cancelCurrentJob() {
+      if (!activeJobId) return;
+      try {
+        await fetch(`/api/jobs/${activeJobId}/cancel`, { method: "POST" });
+        appendLog("Cancellation request sent...");
+      } catch (e) {
+        appendLog("Failed to cancel: " + e.message);
+      }
+    }
+
+    function appendLog(msg) {
+      const box = document.getElementById("live-log");
+      const line = document.createElement("div");
+      line.className = "log-line";
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    document.getElementById("log-filter").addEventListener("change", () => {
+      if (currentResult) renderProbeTable(currentResult.probes);
+    });
+
+    document.getElementById("btn-export").addEventListener("click", () => {
+      if (!currentResult) return;
+      window.location.href = `/api/export/${currentResult.profile.job_id}`;
+    });
+
+    document.getElementById("btn-copy-code").addEventListener("click", async () => {
+      if (!currentResult) return;
+      try {
+        const res = await fetch(`/api/generate-client/${currentResult.profile.job_id}`);
+        const snippet = await res.text();
+        await navigator.clipboard.writeText(snippet);
+        const btn = document.getElementById("btn-copy-code");
+        btn.textContent = "Copied to Clipboard!";
+        setTimeout(() => (btn.textContent = "Copy Python Client"), 2000);
+      } catch (err) {
+        alert("Could not copy client snippet: " + err.message);
+      }
+    });
+
+    document.getElementById("check-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorBox = document.getElementById("error-box");
+      const statusBar = document.getElementById("status-bar");
+      const liveCard = document.getElementById("live-card");
+      const liveTimeline = document.getElementById("live-timeline");
+      const submitBtn = document.getElementById("submit-btn");
+
+      errorBox.style.display = "none";
+      let customHeaders = {};
+      const rawHeaders = document.getElementById("customHeaders").value.trim();
+      if (rawHeaders) {
+        try {
+          customHeaders = JSON.parse(rawHeaders);
+        } catch {
+          errorBox.textContent = "Custom Headers must be valid JSON.";
+          errorBox.style.display = "block";
+          return;
+        }
+      }
+
+      const payload = {
+        url: document.getElementById("url").value.trim(),
+        method: document.getElementById("method").value,
+        request_budget: parseInt(document.getElementById("maxRequests").value, 10),
+        probe_interval_sec: parseFloat(document.getElementById("interval").value),
+        burst_size: parseInt(document.getElementById("burstSize").value, 10),
+        check_cooldown: document.getElementById("cooldown").checked,
+        verify_safe_pace: document.getElementById("verify").checked,
+        check_robots: document.getElementById("robots").checked,
+        custom_headers: customHeaders,
+      };
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Analyzing...";
+      statusBar.style.display = "flex";
+      liveCard.classList.remove("hidden");
+      liveTimeline.innerHTML = "";
+      document.getElementById("live-log").innerHTML = "";
+      document.getElementById("results").classList.add("hidden");
+
+      // Reset live counters
+      document.getElementById("cnt-sent").textContent = "0";
+      document.getElementById("cnt-ok").textContent = "0";
+      document.getElementById("cnt-429").textContent = "0";
+      document.getElementById("cnt-slow").textContent = "0";
+      document.getElementById("cnt-net").textContent = "0";
+
+      let probesReceived = 0;
+      let okCount = 0;
+      let badCount = 0;
+      let slowCount = 0;
+      let netCount = 0;
+
+      try {
+        // Create job
+        const initRes = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!initRes.ok) {
+          const errData = await initRes.json();
+          throw new Error(errData.detail || "Failed to initialize analysis job");
+        }
+
+        const initData = await initRes.json();
+        activeJobId = initData.job_id;
+        appendLog(`Analysis job queued with ID: ${activeJobId}`);
+
+        // Connect to SSE stream
+        const response = await fetch(`/api/jobs/${activeJobId}/stream`);
+        if (!response.ok) throw new Error("Could not subscribe to analysis event stream");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.startsWith("data: ")) continue;
+            const msg = JSON.parse(part.slice(6));
+
+            if (msg.type === "status") {
+              document.getElementById("status-phase").textContent = (msg.phase || "PROGRESS").toUpperCase() + ":";
+              document.getElementById("status-text").textContent = msg.message;
+              appendLog(msg.message);
+            } else if (msg.type === "info" || msg.type === "warning") {
+              appendLog(msg.message);
+            } else if (msg.type === "probe") {
+              const p = msg.probe;
+              probesReceived++;
+              if (p.accepted) okCount++;
+              if (p.confirmed_rate_limit) badCount++;
+              if (p.throttled) slowCount++;
+              if (p.error_type === "network_error" || p.error_type === "dns_error" || p.error_type === "timeout") netCount++;
+
+              document.getElementById("status-count").textContent = `${probesReceived} probes`;
+              document.getElementById("cnt-sent").textContent = probesReceived;
+              document.getElementById("cnt-ok").textContent = okCount;
+              document.getElementById("cnt-429").textContent = badCount;
+              document.getElementById("cnt-slow").textContent = slowCount;
+              document.getElementById("cnt-net").textContent = netCount;
+              document.getElementById("live-time").textContent = `${p.elapsed_sec}s elapsed`;
+
+              liveTimeline.insertAdjacentHTML("beforeend", dotHtml(p));
+              appendLog(`Probe #${p.request_num} [${p.phase}]: HTTP ${p.status_code || "ERR"} (${p.latency_ms}ms) -> ${p.accepted ? "Accepted" : p.block_reason || "Blocked"}`);
+            } else if (msg.type === "complete") {
+              currentResult = msg.result;
+              renderResults(msg.result);
+              loadHistory();
+              fetchStats();
+              appendLog("Analysis completed successfully!");
+            } else if (msg.type === "error") {
+              throw new Error(msg.message);
+            }
+          }
+        }
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.style.display = "block";
+        appendLog(`Error: ${err.message}`);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Analyze";
+        statusBar.style.display = "none";
+        activeJobId = null;
+      }
+    });
+
+    function dotHtml(p) {
+      const cls = p.confirmed_rate_limit ? "dot dot-bad" : p.throttled ? "dot dot-warn" : p.accepted ? "dot dot-ok" : "dot dot-bad";
+      const tip = `#${p.request_num} [${p.phase}] · HTTP ${p.status_code ?? "ERR"} · ${p.latency_ms}ms${p.block_reason ? " · " + p.block_reason : ""}`;
+      return `<div class="${cls}" title="${tip}">${p.request_num}</div>`;
+    }
+
+    function renderResults(data) {
+      const p = data.profile;
+      const probes = data.probes;
+      document.getElementById("results").classList.remove("hidden");
+
+      document.getElementById("m-summary").textContent = p.frequency_summary;
+      document.getElementById("m-burst").textContent = `${p.safe_burst_size} req`;
+      document.getElementById("m-interval").textContent = `${p.rate_recommendations.recommended_interval_sec}s (${p.rate_recommendations.recommended_interval_ms}ms)`;
+      document.getElementById("m-rps").textContent = `${p.rate_recommendations.recommended_rps} req/sec`;
+      document.getElementById("m-rpm").textContent = `${p.rate_recommendations.recommended_rpm} req/m`;
+      document.getElementById("m-verify").textContent =
+        p.rate_recommendations.verification_passed === true ? "verified safe ✓" :
+        p.rate_recommendations.verification_passed === false ? "adjusted after verify ⚠" : "unverified estimate";
+
+      document.getElementById("m-blocked").textContent =
+        `${p.request_counters.confirmed_rate_limited}/${p.request_counters.total_sent} (${p.block_rate_pct}%)`;
+      document.getElementById("m-cooldown").textContent =
+        p.cooldown_stats.observed_cooldown_sec != null
+          ? `~${p.cooldown_stats.observed_cooldown_sec}s`
+          : (p.cooldown_stats.server_retry_after_sec ? `Retry-After: ${p.cooldown_stats.server_retry_after_sec}s` : "none observed");
+
+      document.getElementById("m-pattern").textContent = p.pattern_classification.detected_pattern;
+      const confBadge = document.getElementById("m-confidence");
+      confBadge.textContent = `${p.pattern_classification.confidence.toUpperCase()} CONFIDENCE (${Math.round(p.pattern_classification.confidence_score * 100)}%)`;
+      confBadge.className = p.pattern_classification.confidence === "high" ? "badge badge-ok" : p.pattern_classification.confidence === "medium" ? "badge badge-warn" : "badge badge-info";
+
+      document.getElementById("m-explanation").textContent = p.pattern_classification.explanation;
+
+      // Evidence list
+      const evList = document.getElementById("m-evidence");
+      evList.innerHTML = p.pattern_classification.supporting_evidence.map(e => `<li>${e}</li>`).join("");
+
+      document.getElementById("timeline").innerHTML = probes.map(dotHtml).join("");
+      document.getElementById("m-robots-note").textContent =
+        p.robots_crawl_delay_sec != null ? `robots.txt Crawl-delay: ${p.robots_crawl_delay_sec}s` : "";
+
+      document.getElementById("m-latency-stats").textContent =
+        `Baseline Median: ${p.baseline_stats.median_latency_ms ?? "-"} ms · Avg: ${p.baseline_stats.avg_latency_ms ?? "-"} ms`;
+      renderSparkline(probes);
+
+      const headers = p.observed_headers || {};
+      document.getElementById("m-headers").textContent =
+        Object.keys(headers).length ? JSON.stringify(headers, null, 2) : "No rate-limit headers returned";
+
+      renderProbeTable(probes);
+      window.scrollTo({ top: document.getElementById("results").offsetTop - 20, behavior: "smooth" });
+    }
+
+    function renderSparkline(probes) {
+      const svg = document.getElementById("sparkline");
+      if (!probes.length) { svg.innerHTML = ""; return; }
+      const maxLat = Math.max(...probes.map(p => p.latency_ms), 50);
+      const w = 600, h = 64, pad = 8;
+      const step = probes.length > 1 ? (w - pad * 2) / (probes.length - 1) : 0;
+
+      const pts = probes.map((p, i) => {
+        const x = pad + i * step;
+        const y = h - pad - ((p.latency_ms / maxLat) * (h - pad * 2));
+        return { x, y, p };
+      });
+
+      const line = pts.map(pt => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+      const circles = pts.map(pt => {
+        const fill = pt.p.confirmed_rate_limit ? "#ef4444" : pt.p.throttled ? "#f59e0b" : pt.p.accepted ? "#10b981" : "#64748b";
+        return `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="3.5" fill="${fill}"><title>#${pt.p.request_num}: ${pt.p.latency_ms}ms</title></circle>`;
+      }).join("");
+
+      svg.innerHTML = `<polyline fill="none" stroke="#0f172a" stroke-width="1.5" points="${line}" />${circles}`;
+    }
+
+    function renderProbeTable(probes) {
+      const filter = document.getElementById("log-filter").value;
+      const filtered = probes.filter(p => {
+        if (filter === "blocked") return p.confirmed_rate_limit;
+        if (filter === "throttled") return p.throttled;
+        if (filter === "errors") return !p.accepted;
+        return true;
+      });
+
+      document.getElementById("probe-rows").innerHTML = filtered.map((p) => {
+        const badge = p.confirmed_rate_limit
+          ? `<span class="badge badge-bad">429 Block</span>`
+          : p.throttled
+            ? `<span class="badge badge-warn">Throttled</span>`
+            : p.accepted
+              ? `<span class="badge badge-ok">Accepted</span>`
+              : `<span class="badge badge-bad">${p.error_type || "Error"}</span>`;
+        const detail = [
+          p.block_reason || "",
+          p.retry_after_sec != null ? `Retry-After: ${p.retry_after_sec}s` : ""
+        ].filter(Boolean).join(" · ") || "—";
+
+        return `
+          <tr>
+            <td class="mono">${p.request_num}</td>
+            <td class="mono">${p.phase}</td>
+            <td class="mono">${p.elapsed_sec}s</td>
+            <td class="mono">${p.status_code ?? "ERR"}</td>
+            <td class="mono">${p.latency_ms} ms</td>
+            <td>${badge}</td>
+            <td class="mono">${detail}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/history?limit=15");
+        const data = await res.json();
+        const list = document.getElementById("history-list");
+        if (!data.items.length) {
+          list.textContent = "No saved runs yet.";
+          return;
+        }
+        list.innerHTML = data.items.map(item => `
+          <div class="history-item">
+            <div style="flex:1;">
+              <span class="history-url" onclick="loadRun('${item.job_id}')">${item.target_url}</span>
+              <div class="mono" style="color:var(--muted); font-size:11.5px; margin-top:2px;">
+                ${item.detected_pattern} · burst ${item.safe_burst_size} · interval ${item.recommended_interval_sec}s · ${item.block_rate_pct}% blocked · ${item.created_at.slice(0,19).replace('T',' ')}
+              </div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button type="button" class="btn-ghost" onclick="loadRun('${item.job_id}')">View</button>
+              <button type="button" class="btn-ghost" onclick="window.location.href='/api/export/${item.job_id}'">Export</button>
+              <button type="button" class="btn-danger" onclick="deleteRun('${item.job_id}')">✕</button>
+            </div>
+          </div>
+        `).join("");
+      } catch {}
+    }
+
+    async function loadRun(jobId) {
+      try {
+        const res = await fetch(`/api/history/${jobId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        currentResult = data;
+        renderResults(data);
+      } catch {}
+    }
+
+    async function deleteRun(jobId) {
+      if (!confirm(`Delete history run ${jobId}?`)) return;
+      try {
+        await fetch(`/api/history/${jobId}`, { method: "DELETE" });
+        loadHistory();
+        fetchStats();
+      } catch (e) {
+        alert("Failed to delete run: " + e.message);
+      }
+    }
+
+    // Initial load
+    fetchStats();
+    loadHistory();
+  </script>
+</body>
+</html>
