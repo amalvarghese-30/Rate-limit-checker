@@ -352,6 +352,17 @@ class RateLimitAnalyzer:
         probes: List[ProbeEvent] = []
         observed_headers: Dict[str, str] = {}
         req_counter = 0
+        baseline_stats = BaselineStats()
+        cooldown_stats = CooldownStats()
+        burst_probes: List[ProbeEvent] = []
+        first_block_idx: Optional[int] = None
+        first_block_sec: Optional[float] = None
+        first_block_mono: Optional[float] = None
+        consecutive_blocks = 0
+        classification: Optional[PatternClassification] = None
+        rec_rates: Optional[RateRecommendations] = None
+        safe_burst = 1
+        robots_delay: Optional[float] = None
 
         configured_budget = req.request_budget
         concurrency = max(1, min(req.burst_size, configured_budget))
@@ -397,7 +408,18 @@ class RateLimitAnalyzer:
                 "estimated_remaining_sec": eta,
             })
 
+        async def sleep_cancellable(duration_sec: float) -> None:
+            if duration_sec <= 0:
+                return
+            end_t = time.monotonic() + duration_sec
+            while time.monotonic() < end_t:
+                if is_cancelled and is_cancelled():
+                    break
+                rem = end_t - time.monotonic()
+                await asyncio.sleep(min(0.05, max(0.005, rem)))
+
         deadline_reached = False
+        cancelled_during_run = False
         client_kwargs = {
             "timeout": req.timeout_sec,
             "limits": httpx.Limits(max_keepalive_connections=max(10, concurrency * 2), max_connections=max(20, concurrency * 3)),
@@ -407,7 +429,6 @@ class RateLimitAnalyzer:
 
         async with httpx.AsyncClient(**client_kwargs) as client:
             # Check robots.txt Crawl-delay
-            robots_delay: Optional[float] = None
             if req.check_robots:
                 emit({"type": "status", "phase": "baseline", "message": "Phase 0: Checking robots.txt for crawl guidelines..."})
                 robots_delay = await self._fetch_robots_crawl_delay(client, target_url)
@@ -439,7 +460,7 @@ class RateLimitAnalyzer:
                 emit({"type": "probe", "probe": b_ev.model_dump()})
                 emit_progress("baseline")
                 if b_idx < baseline_count - 1:
-                    await asyncio.sleep(0.2)
+                    await sleep_cancellable(0.2)
 
             baseline_stats = self._calculate_baseline(baseline_probes)
             if not baseline_stats.is_healthy:
@@ -541,7 +562,7 @@ class RateLimitAnalyzer:
                             time_left = deadline_sec - (time.monotonic() - test_start)
                             if retry_wait > 0 and time_left > retry_wait:
                                 emit({"type": "info", "message": f"Server requested Retry-After ({retry_wait}s). Waiting before next probe batch..."})
-                                await asyncio.sleep(retry_wait)
+                                await sleep_cancellable(retry_wait)
 
                         if consecutive_blocks >= 3:
                             emit({"type": "info", "message": f"Sustained rate limit wall ({consecutive_blocks} consecutive batches blocked). Stopping discovery."})
@@ -555,7 +576,7 @@ class RateLimitAnalyzer:
                             deadline_reached = True
                             emit({"type": "warning", "message": "Maximum analysis duration reached. Stopping probes."})
                             break
-                        await asyncio.sleep(req.probe_interval_sec)
+                        await sleep_cancellable(req.probe_interval_sec)
 
             # PHASE 4: Cooldown & Recovery Detection
             cooldown_stats = CooldownStats(
@@ -582,7 +603,7 @@ class RateLimitAnalyzer:
                         })
                     else:
                         emit({"type": "info", "message": f"Respecting server requested cooldown: waiting {planned_wait}s before recovery probe..."})
-                        await asyncio.sleep(planned_wait)
+                        await sleep_cancellable(planned_wait)
                         if counters.dispatched_requests < configured_budget:
                             req_counter += 1
                             cooldown_stats.verification_attempts += 1
@@ -612,7 +633,7 @@ class RateLimitAnalyzer:
                             break
                         if (time.monotonic() - test_start) + wait_step > deadline_sec:
                             break
-                        await asyncio.sleep(wait_step)
+                        await sleep_cancellable(wait_step)
                         req_counter += 1
                         cooldown_stats.verification_attempts += 1
                         counters.dispatched_requests += 1
@@ -675,7 +696,7 @@ class RateLimitAnalyzer:
                         if (time.monotonic() - test_start) >= deadline_sec:
                             deadline_reached = True
                             break
-                        await asyncio.sleep(current_v_interval)
+                        await sleep_cancellable(current_v_interval)
                         req_counter += 1
                         counters.dispatched_requests += 1
                         counters.in_progress_requests += 1
@@ -707,7 +728,7 @@ class RateLimitAnalyzer:
                         rec_rates.verification_summary = f"{round_blocks}/{v_sample_size} verification probes encountered resistance; widened interval to {current_v_interval:.2f}s."
                         if v_rounds < 2 and v_ev.retry_after_sec:
                             wait_s = min(v_ev.retry_after_sec, 5.0)
-                            await asyncio.sleep(wait_s)
+                            await sleep_cancellable(wait_s)
 
                 rec_rates.verification_rounds = v_rounds
                 rec_rates.verification_sample_size = v_success + v_failed
@@ -733,14 +754,30 @@ class RateLimitAnalyzer:
             final_status = "partial"
             completion_msg = f"Analysis partially completed: {counters.dispatched_requests} of {configured_budget} requests dispatched."
 
-        if final_status == "partial":
+        if classification is None or rec_rates is None:
+            classification, rec_rates, safe_burst = self._classify_pattern(
+                burst_probes=burst_probes or probes,
+                probe_interval=req.probe_interval_sec,
+                first_block_idx=first_block_idx,
+                cooldown_stats=cooldown_stats,
+                observed_headers=observed_headers,
+                robots_delay=robots_delay,
+                baseline_stats=baseline_stats,
+            )
+
+        if final_status in ("partial", "cancelled"):
             rec_rates.is_provisional = True
             if classification.confidence == "high":
                 classification.confidence = "medium"
                 classification.confidence_score = min(classification.confidence_score, 0.65)
-            classification.limitations.append(
-                f"Analysis was partially completed ({counters.dispatched_requests}/{configured_budget} requests dispatched). Recommendations are provisional."
-            )
+            if final_status == "cancelled":
+                classification.limitations.append(
+                    f"Analysis was cancelled by user ({counters.dispatched_requests}/{configured_budget} requests dispatched). Recommendations are provisional."
+                )
+            else:
+                classification.limitations.append(
+                    f"Analysis was partially completed ({counters.dispatched_requests}/{configured_budget} requests dispatched). Recommendations are provisional."
+                )
 
         # Generate summary
         if classification.detected_pattern == "immediate_access_block":

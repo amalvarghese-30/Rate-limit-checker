@@ -30,13 +30,10 @@ class ActiveJob:
         if self.status.status in ("completed", "failed", "cancelled"):
             return False
         self._cancel_flag = True
-        if self.task and not self.task.done():
-            self.task.cancel()
         self.status.status = "cancelled"
         self.status.completed_at = datetime.now(timezone.utc).isoformat()
         self.status.error = "Job was cancelled by user"
         self.broadcast({"type": "status", "phase": "cancelled", "message": "Analysis cancelled by user."})
-        self.broadcast(None)
         return True
 
     def is_cancelled(self) -> bool:

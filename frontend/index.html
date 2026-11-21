@@ -776,6 +776,7 @@
   <script>
     let currentResult = null;
     let activeJobId = null;
+    let activeAbortController = null;
 
     function applyPreset(reqs, interval, burst) {
       document.getElementById("maxRequests").value = reqs;
@@ -809,12 +810,40 @@
     }
 
     async function cancelCurrentJob() {
-      if (!activeJobId) return;
+      const cancelBtn = document.getElementById("cancel-btn");
+      if (cancelBtn) {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "Cancelling...";
+      }
+      appendLog("User requested analysis cancellation...");
+      if (!activeJobId) {
+        if (activeAbortController) {
+          activeAbortController.abort();
+        }
+        document.getElementById("status-bar").style.display = "none";
+        document.getElementById("submit-btn").disabled = false;
+        document.getElementById("submit-btn").textContent = "Analyze";
+        if (cancelBtn) {
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = "Cancel";
+        }
+        appendLog("Analysis cancelled before dispatch.");
+        return;
+      }
       try {
-        await fetch(`/api/jobs/${activeJobId}/cancel`, { method: "POST" });
-        appendLog("Cancellation request sent...");
+        const res = await fetch(`/api/jobs/${activeJobId}/cancel`, { method: "POST" });
+        if (res.ok) {
+          appendLog("Cancellation request confirmed by server.");
+        } else {
+          const err = await res.json().catch(() => ({}));
+          appendLog("Cancellation status: " + (err.detail || res.statusText));
+        }
       } catch (e) {
         appendLog("Failed to cancel: " + e.message);
+        if (cancelBtn) {
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = "Cancel";
+        }
       }
     }
 
@@ -826,6 +855,8 @@
       box.appendChild(line);
       box.scrollTop = box.scrollHeight;
     }
+
+    document.getElementById("cancel-btn").addEventListener("click", cancelCurrentJob);
 
     document.getElementById("log-filter").addEventListener("change", () => {
       if (currentResult) renderProbeTable(currentResult.probes);
@@ -904,12 +935,15 @@
       let slowCount = 0;
       let netCount = 0;
 
+      activeAbortController = new AbortController();
+
       try {
         // Create job
         const initRes = await fetch("/api/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          signal: activeAbortController.signal,
         });
 
         if (!initRes.ok) {
@@ -922,7 +956,9 @@
         appendLog(`Analysis job queued with ID: ${activeJobId}`);
 
         // Connect to SSE stream
-        const response = await fetch(`/api/jobs/${activeJobId}/stream`);
+        const response = await fetch(`/api/jobs/${activeJobId}/stream`, {
+          signal: activeAbortController.signal,
+        });
         if (!response.ok) throw new Error("Could not subscribe to analysis event stream");
 
         const reader = response.body.getReader();
@@ -986,14 +1022,34 @@
           }
         }
       } catch (err) {
-        errorBox.textContent = err.message;
-        errorBox.style.display = "block";
-        appendLog(`Error: ${err.message}`);
+        if (err.name !== "AbortError") {
+          errorBox.textContent = err.message;
+          errorBox.style.display = "block";
+          appendLog(`Error: ${err.message}`);
+        }
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = "Analyze";
         statusBar.style.display = "none";
+        const cancelBtnEl = document.getElementById("cancel-btn");
+        if (cancelBtnEl) {
+          cancelBtnEl.disabled = false;
+          cancelBtnEl.textContent = "Cancel";
+        }
+        if (activeJobId && !currentResult) {
+          try {
+            const rRes = await fetch(`/api/jobs/${activeJobId}/result`);
+            if (rRes.ok) {
+              const rData = await rRes.json();
+              currentResult = rData;
+              renderResults(rData, rData.profile?.status || "cancelled", rData.profile?.completion_message);
+            }
+          } catch {}
+        }
+        activeAbortController = null;
         activeJobId = null;
+        loadHistory();
+        fetchStats();
       }
     });
 
