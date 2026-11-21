@@ -923,11 +923,22 @@
       document.getElementById("results").classList.add("hidden");
 
       // Reset live counters
-      document.getElementById("cnt-sent").textContent = "0";
-      document.getElementById("cnt-ok").textContent = "0";
-      document.getElementById("cnt-429").textContent = "0";
-      document.getElementById("cnt-slow").textContent = "0";
-      document.getElementById("cnt-net").textContent = "0";
+      const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+      };
+      setVal("cnt-budget", payload.request_budget || "0");
+      setVal("cnt-dispatched", "0");
+      setVal("cnt-completed", "0");
+      setVal("cnt-inprogress", "0");
+      setVal("cnt-remaining", payload.request_budget || "0");
+      setVal("cnt-phase", "STARTING");
+      setVal("cnt-elapsed", "0.0s");
+      setVal("cnt-eta", "—");
+      setVal("cnt-ok", "0");
+      setVal("cnt-429", "0");
+      setVal("cnt-slow", "0");
+      setVal("cnt-net", "0");
 
       let probesReceived = 0;
       let okCount = 0;
