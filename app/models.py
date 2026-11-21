@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 class AnalyzeRequest(BaseModel):
     url: HttpUrl
     method: Literal["GET", "HEAD"] = "GET"
-    request_budget: int = Field(default=15, ge=3, le=100, description="Max total requests to send during probing")
-    probe_interval_sec: float = Field(default=0.3, ge=0.05, le=10.0, description="Baseline delay between requests in seconds")
+    request_budget: int = Field(default=15, ge=1, le=500, description="Max total requests to send during probing")
+    probe_interval_sec: float = Field(default=0.3, ge=0.01, le=10.0, description="Baseline delay between requests in seconds")
     burst_size: int = Field(default=3, ge=1, le=20, description="Initial burst grouping size")
-    max_analysis_duration_sec: float = Field(default=45.0, ge=5.0, le=120.0, description="Hard cap on analysis runtime")
-    timeout_sec: float = Field(default=10.0, ge=1.0, le=30.0)
+    max_analysis_duration_sec: Optional[float] = Field(default=None, ge=0.1, le=600.0, description="Hard cap on analysis runtime")
+    timeout_sec: float = Field(default=10.0, ge=0.1, le=30.0)
     check_cooldown: bool = True
     verify_safe_pace: bool = True
     check_robots: bool = True
@@ -47,6 +47,16 @@ class BaselineStats(BaseModel):
 
 
 class RequestCounters(BaseModel):
+    configured_budget: int = 0
+    dispatched_requests: int = 0
+    completed_requests: int = 0
+    successful_requests: int = 0
+    rate_limited_requests: int = 0
+    timed_out_requests: int = 0
+    network_errors: int = 0
+    remaining_budget: int = 0
+    in_progress_requests: int = 0
+    # Backward compatibility aliases
     total_sent: int = 0
     accepted: int = 0
     confirmed_rate_limited: int = 0  # HTTP 429 or 403 with confirmed rate-limit headers/body
@@ -70,6 +80,7 @@ class ProbeEvent(BaseModel):
     error_type: Optional[str] = None  # None, "http_429", "http_403_rate_limit", "http_403_ambiguous", "http_503_unavail", "http_error", "network_error", "dns_error", "timeout"
     block_reason: Optional[str] = None
     retry_after_sec: Optional[float] = None
+    dispatch_timestamp: Optional[float] = None
     scheduled_interval_ms: Optional[float] = None
     actual_interval_ms: Optional[float] = None
     rate_limit_limit: Optional[int] = None
@@ -103,6 +114,7 @@ class RateRecommendations(BaseModel):
     verification_rounds: int = 0
     verification_sample_size: int = 0
     verification_summary: Optional[str] = None
+    is_provisional: bool = False
 
 
 class CooldownStats(BaseModel):
@@ -121,6 +133,12 @@ class RateLimitProfile(BaseModel):
     created_at: str
     target_url: str
     method: str
+    status: Literal["completed", "partial", "cancelled", "failed"] = "completed"
+    completion_message: str = "Analysis completed successfully."
+    configured_budget: int = 0
+    dispatched_requests: int = 0
+    execution_deadline_sec: float = 60.0
+    actual_duration_sec: float = 0.0
     robots_crawl_delay_sec: Optional[float] = None
     baseline_stats: BaselineStats
     request_counters: RequestCounters
@@ -219,10 +237,17 @@ class AnalysisResult(BaseModel):
 
 class JobStatus(BaseModel):
     job_id: str
-    status: Literal["queued", "running", "completed", "failed", "cancelled"]
+    status: Literal["queued", "running", "completed", "partial", "failed", "cancelled"]
     current_phase: str = "init"
     progress_pct: int = 0
     probes_count: int = 0
+    configured_budget: int = 0
+    dispatched_requests: int = 0
+    completed_requests: int = 0
+    in_progress_requests: int = 0
+    remaining_budget: int = 0
+    elapsed_sec: float = 0.0
+    estimated_remaining_sec: Optional[float] = None
     created_at: str
     started_at: Optional[str] = None
     completed_at: Optional[str] = None

@@ -69,6 +69,7 @@ class HistoryStore:
                 ("total_requests", "INTEGER NOT NULL DEFAULT 0"),
                 ("blocked_requests", "INTEGER NOT NULL DEFAULT 0"),
                 ("verified_passed", "INTEGER DEFAULT NULL"),
+                ("status", "TEXT NOT NULL DEFAULT 'completed'"),
             ]
             for col_name, col_def in migrations:
                 if col_name not in existing_cols:
@@ -126,8 +127,8 @@ class HistoryStore:
                 INSERT OR REPLACE INTO runs (
                     job_id, created_at, target_url, method, detected_pattern,
                     confidence, recommended_interval_sec, recommended_rps, safe_burst_size,
-                    total_requests, blocked_requests, block_rate_pct, verified_passed, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    total_requests, blocked_requests, block_rate_pct, verified_passed, status, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     p.job_id,
@@ -143,6 +144,7 @@ class HistoryStore:
                     p.blocked_requests,
                     p.block_rate_pct,
                     verified_int,
+                    getattr(p, "status", "completed"),
                     result.model_dump_json(),
                 ),
             )
@@ -153,7 +155,7 @@ class HistoryStore:
                 """
                 SELECT job_id, created_at, target_url, method, detected_pattern,
                        confidence, recommended_interval_sec, recommended_rps, safe_burst_size,
-                       total_requests, blocked_requests, block_rate_pct, verified_passed
+                       total_requests, blocked_requests, block_rate_pct, verified_passed, status
                 FROM runs
                 ORDER BY created_at DESC
                 LIMIT ?

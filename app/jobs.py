@@ -91,12 +91,24 @@ class JobManager:
 
                 job.status.status = "running"
                 job.status.started_at = datetime.now(timezone.utc).isoformat()
+                job.status.configured_budget = job.request.request_budget
+                job.status.remaining_budget = job.request.request_budget
                 job.broadcast({"type": "status", "phase": "running", "message": "Starting analysis..."})
 
                 def on_event(ev: dict) -> None:
-                    if ev.get("type") == "probe":
+                    if ev.get("type") == "progress":
+                        job.status.configured_budget = ev.get("budget", job.request.request_budget)
+                        job.status.dispatched_requests = ev.get("dispatched", 0)
+                        job.status.completed_requests = ev.get("completed", 0)
+                        job.status.in_progress_requests = ev.get("in_progress", 0)
+                        job.status.remaining_budget = ev.get("remaining", 0)
+                        job.status.elapsed_sec = ev.get("elapsed_sec", 0.0)
+                        job.status.estimated_remaining_sec = ev.get("estimated_remaining_sec")
+                        job.status.current_phase = ev.get("current_phase", job.status.current_phase)
+                        if job.status.configured_budget > 0:
+                            job.status.progress_pct = min(99, int((job.status.completed_requests / job.status.configured_budget) * 100))
+                    elif ev.get("type") == "probe":
                         job.status.probes_count += 1
-                        job.status.progress_pct = min(95, int((job.status.probes_count / max(1, job.request.request_budget)) * 100))
                     elif ev.get("type") == "status":
                         job.status.current_phase = ev.get("phase", job.status.current_phase)
                     job.broadcast(ev)
@@ -109,14 +121,18 @@ class JobManager:
                     )
                     job.result = res
                     self.store.save(res)
-                    job.status.status = "completed"
-                    job.status.progress_pct = 100
+                    job.status.status = res.profile.status  # "completed" or "partial"
+                    job.status.progress_pct = 100 if res.profile.status == "completed" else min(99, int((res.profile.request_counters.completed_requests / max(1, res.profile.configured_budget or job.request.request_budget)) * 100))
                     job.status.completed_at = datetime.now(timezone.utc).isoformat()
                     job.status.summary = {
+                        "status": res.profile.status,
+                        "completion_message": res.profile.completion_message,
                         "pattern": res.profile.detected_pattern,
                         "recommended_interval_sec": res.profile.recommended_interval_sec,
                         "safe_burst_size": res.profile.safe_burst_size,
                         "verified_passed": res.profile.verification_passed,
+                        "dispatched_requests": res.profile.request_counters.dispatched_requests,
+                        "configured_budget": res.profile.request_counters.configured_budget,
                     }
                 except asyncio.CancelledError:
                     job.status.status = "cancelled"

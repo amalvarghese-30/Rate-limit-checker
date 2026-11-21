@@ -500,8 +500,44 @@
         <div class="section-title">Live Probe Activity</div>
         <span id="live-time" class="mono" style="font-size:12px; color:var(--muted);">0.0s elapsed</span>
       </div>
+
+      <!-- Detailed 8-Point Live Progress Grid -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 12px;">
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">Budget</div>
+          <div class="stat-val" style="font-size: 16px;" id="cnt-budget">0</div>
+        </div>
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">Dispatched</div>
+          <div class="stat-val" style="font-size: 16px;" id="cnt-dispatched">0</div>
+        </div>
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">Completed</div>
+          <div class="stat-val" style="font-size: 16px;" id="cnt-completed">0</div>
+        </div>
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">In Progress</div>
+          <div class="stat-val" style="font-size: 16px; color: var(--accent);" id="cnt-inprogress">0</div>
+        </div>
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">Remaining</div>
+          <div class="stat-val" style="font-size: 16px;" id="cnt-remaining">0</div>
+        </div>
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">Phase</div>
+          <div class="stat-val" style="font-size: 13px; text-transform: uppercase;" id="cnt-phase">-</div>
+        </div>
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">Elapsed</div>
+          <div class="stat-val" style="font-size: 16px;" id="cnt-elapsed">0.0s</div>
+        </div>
+        <div class="stat-box" style="padding: 8px 10px;">
+          <div class="stat-label">Est. Remaining</div>
+          <div class="stat-val" style="font-size: 16px;" id="cnt-eta">—</div>
+        </div>
+      </div>
+
       <div class="live-counters">
-        <span>Sent: <span class="live-counter-val" id="cnt-sent">0</span></span>
         <span>Accepted: <span class="live-counter-val" style="color:var(--ok);" id="cnt-ok">0</span></span>
         <span>Confirmed 429: <span class="live-counter-val" style="color:var(--bad);" id="cnt-429">0</span></span>
         <span>Throttled (Latency): <span class="live-counter-val" style="color:var(--warn);" id="cnt-slow">0</span></span>
@@ -513,6 +549,8 @@
 
     <!-- Completed Analysis Results View -->
     <div id="results" class="hidden">
+      <!-- Status Notice Banner -->
+      <div id="analysis-completion-banner" style="margin-bottom: 14px; padding: 12px 14px; border-radius: 6px; font-size: 13.5px; font-weight: 500;"></div>
       <!-- Frequency Blueprint Card -->
       <div class="card">
         <div class="section-head">
@@ -703,7 +741,8 @@
             <tr>
               <th>#</th>
               <th>Phase</th>
-              <th>Elapsed</th>
+              <th>Dispatched (Elapsed)</th>
+              <th>Actual Interval</th>
               <th>Status</th>
               <th>Latency</th>
               <th>Result</th>
@@ -901,7 +940,16 @@
             if (!part.startsWith("data: ")) continue;
             const msg = JSON.parse(part.slice(6));
 
-            if (msg.type === "status") {
+            if (msg.type === "progress") {
+              if (document.getElementById("cnt-budget")) document.getElementById("cnt-budget").textContent = msg.budget ?? 0;
+              if (document.getElementById("cnt-dispatched")) document.getElementById("cnt-dispatched").textContent = msg.dispatched ?? 0;
+              if (document.getElementById("cnt-completed")) document.getElementById("cnt-completed").textContent = msg.completed ?? 0;
+              if (document.getElementById("cnt-inprogress")) document.getElementById("cnt-inprogress").textContent = msg.in_progress ?? 0;
+              if (document.getElementById("cnt-remaining")) document.getElementById("cnt-remaining").textContent = msg.remaining ?? 0;
+              if (document.getElementById("cnt-phase")) document.getElementById("cnt-phase").textContent = (msg.current_phase || "PROBE").toUpperCase();
+              if (document.getElementById("cnt-elapsed")) document.getElementById("cnt-elapsed").textContent = `${msg.elapsed_sec ?? 0}s`;
+              if (document.getElementById("cnt-eta")) document.getElementById("cnt-eta").textContent = msg.estimated_remaining_sec != null ? `~${msg.estimated_remaining_sec}s` : "—";
+            } else if (msg.type === "status") {
               document.getElementById("status-phase").textContent = (msg.phase || "PROGRESS").toUpperCase() + ":";
               document.getElementById("status-text").textContent = msg.message;
               appendLog(msg.message);
@@ -916,7 +964,7 @@
               if (p.error_type === "network_error" || p.error_type === "dns_error" || p.error_type === "timeout") netCount++;
 
               document.getElementById("status-count").textContent = `${probesReceived} probes`;
-              document.getElementById("cnt-sent").textContent = probesReceived;
+              if (document.getElementById("cnt-completed")) document.getElementById("cnt-completed").textContent = probesReceived;
               document.getElementById("cnt-ok").textContent = okCount;
               document.getElementById("cnt-429").textContent = badCount;
               document.getElementById("cnt-slow").textContent = slowCount;
@@ -924,13 +972,14 @@
               document.getElementById("live-time").textContent = `${p.elapsed_sec}s elapsed`;
 
               liveTimeline.insertAdjacentHTML("beforeend", dotHtml(p));
-              appendLog(`Probe #${p.request_num} [${p.phase}]: HTTP ${p.status_code || "ERR"} (${p.latency_ms}ms) -> ${p.accepted ? "Accepted" : p.block_reason || "Blocked"}`);
+              const actualIntInfo = p.actual_interval_ms != null ? ` [Interval: ${Math.round(p.actual_interval_ms)}ms]` : "";
+              appendLog(`Probe #${p.request_num} [${p.phase}]: HTTP ${p.status_code || "ERR"} (${p.latency_ms}ms)${actualIntInfo} -> ${p.accepted ? "Accepted" : p.block_reason || "Blocked"}`);
             } else if (msg.type === "complete") {
               currentResult = msg.result;
-              renderResults(msg.result);
+              renderResults(msg.result, msg.status, msg.message);
               loadHistory();
               fetchStats();
-              appendLog("Analysis completed successfully!");
+              appendLog(msg.message || "Analysis finished.");
             } else if (msg.type === "error") {
               throw new Error(msg.message);
             }
@@ -950,14 +999,40 @@
 
     function dotHtml(p) {
       const cls = p.confirmed_rate_limit ? "dot dot-bad" : p.throttled ? "dot dot-warn" : p.accepted ? "dot dot-ok" : "dot dot-bad";
-      const tip = `#${p.request_num} [${p.phase}] · HTTP ${p.status_code ?? "ERR"} · ${p.latency_ms}ms${p.block_reason ? " · " + p.block_reason : ""}`;
+      const actualInt = p.actual_interval_ms != null ? ` · Actual Int: ${Math.round(p.actual_interval_ms)}ms` : "";
+      const tip = `#${p.request_num} [${p.phase}] · HTTP ${p.status_code ?? "ERR"} · ${p.latency_ms}ms${actualInt}${p.block_reason ? " · " + p.block_reason : ""}`;
       return `<div class="${cls}" title="${tip}">${p.request_num}</div>`;
     }
 
-    function renderResults(data) {
+    function renderResults(data, status, message) {
       const p = data.profile;
       const probes = data.probes;
       document.getElementById("results").classList.remove("hidden");
+
+      // Render completion banner
+      const pStatus = status || p.status || "completed";
+      const pMsg = message || p.completion_message || "Analysis finished.";
+      const banner = document.getElementById("analysis-completion-banner");
+      if (banner) {
+        banner.textContent = pMsg;
+        if (pStatus === "completed") {
+          banner.style.background = "var(--ok-bg)";
+          banner.style.color = "var(--ok-text)";
+          banner.style.border = "1px solid #a7f3d0";
+        } else if (pStatus === "partial") {
+          banner.style.background = "var(--warn-bg)";
+          banner.style.color = "var(--warn-text)";
+          banner.style.border = "1px solid #fde68a";
+        } else if (pStatus === "cancelled") {
+          banner.style.background = "#f1f5f9";
+          banner.style.color = "#475569";
+          banner.style.border = "1px solid #cbd5e1";
+        } else {
+          banner.style.background = "var(--bad-bg)";
+          banner.style.color = "var(--bad-text)";
+          banner.style.border = "1px solid #fecaca";
+        }
+      }
 
       // Pre-fill Stage 2 Automatic Pacing Engine controls
       const execUrlEl = document.getElementById("exec-target-url");
@@ -973,6 +1048,7 @@
       document.getElementById("m-rps").textContent = `${p.rate_recommendations.recommended_rps} req/sec`;
       document.getElementById("m-rpm").textContent = `${p.rate_recommendations.recommended_rpm} req/m`;
       document.getElementById("m-verify").textContent =
+        p.rate_recommendations.is_provisional ? "provisional (incomplete sample) ⚠" :
         p.rate_recommendations.verification_passed === true ? "verified safe ✓" :
         p.rate_recommendations.verification_passed === false ? "adjusted after verify ⚠" : "unverified estimate";
 
@@ -1059,6 +1135,7 @@
             <td class="mono">${p.request_num}</td>
             <td class="mono">${p.phase}</td>
             <td class="mono">${p.elapsed_sec}s</td>
+            <td class="mono">${p.actual_interval_ms != null ? Math.round(p.actual_interval_ms) + " ms" : "—"}</td>
             <td class="mono">${p.status_code ?? "ERR"}</td>
             <td class="mono">${p.latency_ms} ms</td>
             <td>${badge}</td>

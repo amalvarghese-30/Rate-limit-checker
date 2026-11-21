@@ -244,6 +244,8 @@ class RateLimitAnalyzer:
         phase: str,
         test_start: float,
         baseline_latency_ms: Optional[float] = None,
+        scheduled_interval_ms: Optional[float] = None,
+        actual_interval_ms: Optional[float] = None,
     ) -> ProbeEvent:
         start_mono = time.monotonic()
         ts = time.time()
@@ -279,6 +281,7 @@ class RateLimitAnalyzer:
                 request_num=req_num,
                 phase=phase,  # type: ignore[arg-type]
                 timestamp=ts,
+                dispatch_timestamp=ts,
                 elapsed_sec=elapsed_sec,
                 status_code=resp.status_code,
                 latency_ms=latency_ms,
@@ -289,6 +292,8 @@ class RateLimitAnalyzer:
                 error_type=err_type,
                 block_reason=reason,
                 retry_after_sec=parse_retry_after(resp.headers.get("retry-after")),
+                scheduled_interval_ms=scheduled_interval_ms,
+                actual_interval_ms=actual_interval_ms,
                 ratelimit_headers=extract_interesting_headers(resp.headers),
             )
         except Exception as exc:
@@ -300,6 +305,7 @@ class RateLimitAnalyzer:
                 request_num=req_num,
                 phase=phase,  # type: ignore[arg-type]
                 timestamp=ts,
+                dispatch_timestamp=ts,
                 elapsed_sec=elapsed_sec,
                 status_code=None,
                 latency_ms=latency_ms,
@@ -310,6 +316,8 @@ class RateLimitAnalyzer:
                 error_type=err_type,
                 block_reason=reason,
                 retry_after_sec=None,
+                scheduled_interval_ms=scheduled_interval_ms,
+                actual_interval_ms=actual_interval_ms,
                 ratelimit_headers={},
             )
 
@@ -345,10 +353,54 @@ class RateLimitAnalyzer:
         observed_headers: Dict[str, str] = {}
         req_counter = 0
 
-        counters = RequestCounters()
+        configured_budget = req.request_budget
+        concurrency = max(1, min(req.burst_size, configured_budget))
+        counters = RequestCounters(
+            configured_budget=configured_budget,
+            remaining_budget=configured_budget,
+        )
+
+        # Budget-aware execution deadline accounting for baseline, discovery batches, interval, timeouts, and recovery
+        if req.max_analysis_duration_sec is not None:
+            deadline_sec = req.max_analysis_duration_sec
+        else:
+            baseline_est = min(3, configured_budget) * (min(req.timeout_sec, 2.0) + 0.2)
+            disc_batches = math.ceil(max(0, configured_budget - 3) / concurrency)
+            disc_est = disc_batches * (req.probe_interval_sec + min(req.timeout_sec, 2.5))
+            cooldown_est = 25.0 if req.check_cooldown else 0.0
+            verify_est = 15.0 if req.verify_safe_pace else 0.0
+            total_est = baseline_est + disc_est + cooldown_est + verify_est + 25.0
+            deadline_sec = max(45.0, min(600.0, total_est))
+
+        emit({
+            "type": "info",
+            "message": f"Budget-aware execution deadline: {round(deadline_sec, 1)}s (Budget: {configured_budget}, Burst: {concurrency}, Interval: {req.probe_interval_sec}s).",
+        })
+
+        def emit_progress(phase: str) -> None:
+            elapsed = round(time.monotonic() - test_start, 2)
+            eta = None
+            if counters.completed_requests >= 3 and counters.dispatched_requests < configured_budget:
+                remaining_reqs = configured_budget - counters.completed_requests
+                batches_left = math.ceil(remaining_reqs / concurrency)
+                avg_batch_time = elapsed / math.ceil(counters.completed_requests / concurrency)
+                eta = round(batches_left * avg_batch_time, 1)
+            emit({
+                "type": "progress",
+                "budget": configured_budget,
+                "dispatched": counters.dispatched_requests,
+                "completed": counters.completed_requests,
+                "in_progress": counters.in_progress_requests,
+                "remaining": max(0, configured_budget - counters.dispatched_requests),
+                "current_phase": phase,
+                "elapsed_sec": elapsed,
+                "estimated_remaining_sec": eta,
+            })
+
+        deadline_reached = False
         client_kwargs = {
             "timeout": req.timeout_sec,
-            "limits": httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            "limits": httpx.Limits(max_keepalive_connections=max(10, concurrency * 2), max_connections=max(20, concurrency * 3)),
         }
         if self.transport is not None:
             client_kwargs["transport"] = self.transport
@@ -362,13 +414,21 @@ class RateLimitAnalyzer:
                 if robots_delay:
                     emit({"type": "info", "message": f"Found robots.txt Crawl-delay: {robots_delay}s"})
 
-            # PHASE 1: Baseline Measurement (3 baseline requests)
-            emit({"type": "status", "phase": "baseline", "message": "Phase 1: Establishing baseline latency and target health (3 probes)..."})
+            # PHASE 1: Baseline Measurement (up to 3 baseline requests within budget)
+            baseline_count = min(3, configured_budget)
+            emit({"type": "status", "phase": "baseline", "message": f"Phase 1: Establishing baseline latency and target health ({baseline_count} probes)..."})
             baseline_probes: List[ProbeEvent] = []
-            for b_idx in range(3):
+            for b_idx in range(baseline_count):
                 if is_cancelled and is_cancelled():
                     break
+                if (time.monotonic() - test_start) >= deadline_sec:
+                    deadline_reached = True
+                    emit({"type": "warning", "message": "Maximum analysis duration reached. Stopping probes."})
+                    break
                 req_counter += 1
+                counters.dispatched_requests += 1
+                counters.in_progress_requests += 1
+                emit_progress("baseline")
                 b_ev = await self._send_single_probe(
                     client, target_url, req.method, headers, req_counter, "baseline", test_start
                 )
@@ -377,7 +437,8 @@ class RateLimitAnalyzer:
                 observed_headers.update(b_ev.ratelimit_headers)
                 self._update_counters(counters, b_ev)
                 emit({"type": "probe", "probe": b_ev.model_dump()})
-                if b_idx < 2:
+                emit_progress("baseline")
+                if b_idx < baseline_count - 1:
                     await asyncio.sleep(0.2)
 
             baseline_stats = self._calculate_baseline(baseline_probes)
@@ -389,7 +450,7 @@ class RateLimitAnalyzer:
 
             baseline_latency_ms = baseline_stats.median_latency_ms or baseline_stats.avg_latency_ms
 
-            # PHASE 2: Controlled Threshold Discovery
+            # PHASE 2: Controlled Threshold Discovery (Concurrent Batches)
             first_block_idx: Optional[int] = None
             first_block_sec: Optional[float] = None
             first_block_mono: Optional[float] = None
@@ -405,51 +466,96 @@ class RateLimitAnalyzer:
                         first_block_mono = time.monotonic()
                         consecutive_blocks += 1
 
-            remaining_budget = max(0, req.request_budget - len(baseline_probes))
+            remaining_budget = max(0, configured_budget - counters.dispatched_requests)
             if baseline_stats.is_healthy and remaining_budget > 0 and consecutive_blocks == 0:
                 emit({
                     "type": "status",
                     "phase": "probe",
-                    "message": f"Phase 2: Controlled threshold discovery ({remaining_budget} probes budgeted)...",
+                    "message": f"Phase 2: Controlled threshold discovery ({remaining_budget} probes budgeted, burst size {concurrency})...",
                 })
+                last_batch_mono: Optional[float] = None
 
-                for _ in range(remaining_budget):
+                while counters.dispatched_requests < configured_budget:
                     if is_cancelled and is_cancelled():
                         break
-                    # Enforce max analysis duration safety
-                    if (time.monotonic() - test_start) >= req.max_analysis_duration_sec:
+                    if (time.monotonic() - test_start) >= deadline_sec:
+                        deadline_reached = True
                         emit({"type": "warning", "message": "Maximum analysis duration reached. Stopping probes."})
                         break
 
-                    await asyncio.sleep(req.probe_interval_sec)
-                    req_counter += 1
-                    ev = await self._send_single_probe(
-                        client,
-                        target_url,
-                        req.method,
-                        headers,
-                        req_counter,
-                        "probe",
-                        test_start,
-                        baseline_latency_ms=baseline_latency_ms,
-                    )
-                    probes.append(ev)
-                    burst_probes.append(ev)
-                    observed_headers.update(ev.ratelimit_headers)
-                    self._update_counters(counters, ev)
-                    emit({"type": "probe", "probe": ev.model_dump()})
+                    batch_size = min(concurrency, configured_budget - counters.dispatched_requests)
+                    if batch_size <= 0:
+                        break
 
-                    if ev.confirmed_rate_limit or ev.blocked:
+                    batch_scheduled_interval = req.probe_interval_sec * 1000.0
+                    now_mono = time.monotonic()
+                    batch_actual_interval = (now_mono - last_batch_mono) * 1000.0 if last_batch_mono else 0.0
+                    last_batch_mono = now_mono
+
+                    batch_req_nums = []
+                    for _ in range(batch_size):
+                        req_counter += 1
+                        batch_req_nums.append(req_counter)
+
+                    counters.dispatched_requests += batch_size
+                    counters.in_progress_requests += batch_size
+                    emit_progress("probe")
+
+                    async def _send_probe_task(r_num: int) -> ProbeEvent:
+                        ev = await self._send_single_probe(
+                            client,
+                            target_url,
+                            req.method,
+                            headers,
+                            r_num,
+                            "probe",
+                            test_start,
+                            baseline_latency_ms=baseline_latency_ms,
+                            scheduled_interval_ms=batch_scheduled_interval,
+                            actual_interval_ms=batch_actual_interval,
+                        )
+                        self._update_counters(counters, ev)
+                        emit({"type": "probe", "probe": ev.model_dump()})
+                        emit_progress("probe")
+                        return ev
+
+                    batch_results = await asyncio.gather(*[_send_probe_task(r_n) for r_n in batch_req_nums])
+                    probes.extend(batch_results)
+                    burst_probes.extend(batch_results)
+                    for ev in batch_results:
+                        observed_headers.update(ev.ratelimit_headers)
+
+                    batch_blocks = [ev for ev in batch_results if ev.confirmed_rate_limit or ev.blocked]
+                    if batch_blocks:
                         consecutive_blocks += 1
-                        if first_block_idx is None:
-                            first_block_idx = ev.request_num
-                            first_block_sec = ev.elapsed_sec
-                            first_block_mono = time.monotonic()
+                        for ev in batch_blocks:
+                            if first_block_idx is None:
+                                first_block_idx = ev.request_num
+                                first_block_sec = ev.elapsed_sec
+                                first_block_mono = time.monotonic()
+
+                        # Check for server Retry-After delay
+                        retry_candidates = [ev.retry_after_sec for ev in batch_blocks if ev.retry_after_sec]
+                        if retry_candidates:
+                            retry_wait = max(retry_candidates)
+                            time_left = deadline_sec - (time.monotonic() - test_start)
+                            if retry_wait > 0 and time_left > retry_wait:
+                                emit({"type": "info", "message": f"Server requested Retry-After ({retry_wait}s). Waiting before next probe batch..."})
+                                await asyncio.sleep(retry_wait)
+
                         if consecutive_blocks >= 3:
-                            emit({"type": "info", "message": f"Sustained rate limit wall ({consecutive_blocks} consecutive blocks). Stopping probe burst."})
+                            emit({"type": "info", "message": f"Sustained rate limit wall ({consecutive_blocks} consecutive batches blocked). Stopping discovery."})
                             break
                     else:
                         consecutive_blocks = 0
+
+                    # Delay between batches if budget permits
+                    if counters.dispatched_requests < configured_budget:
+                        if (time.monotonic() - test_start) >= deadline_sec:
+                            deadline_reached = True
+                            emit({"type": "warning", "message": "Maximum analysis duration reached. Stopping probes."})
+                            break
+                        await asyncio.sleep(req.probe_interval_sec)
 
             # PHASE 4: Cooldown & Recovery Detection
             cooldown_stats = CooldownStats(
@@ -462,14 +568,13 @@ class RateLimitAnalyzer:
             reset_hint = parse_ratelimit_reset(observed_headers)
             cooldown_stats.server_retry_after_sec = server_retry
 
-            if req.check_cooldown and first_block_idx is not None:
+            if req.check_cooldown and first_block_idx is not None and counters.dispatched_requests < configured_budget:
                 emit({"type": "status", "phase": "cooldown", "message": "Phase 3: Measuring cooldown & recovery timing..."})
                 planned_wait = server_retry or reset_hint
 
                 if planned_wait is not None and planned_wait > 0:
                     cooldown_stats.observed_cooldown_sec = planned_wait
-                    # Check if waiting exceeds duration budget
-                    remaining_time = req.max_analysis_duration_sec - (time.monotonic() - test_start)
+                    remaining_time = deadline_sec - (time.monotonic() - test_start)
                     if planned_wait > remaining_time:
                         emit({
                             "type": "warning",
@@ -478,32 +583,41 @@ class RateLimitAnalyzer:
                     else:
                         emit({"type": "info", "message": f"Respecting server requested cooldown: waiting {planned_wait}s before recovery probe..."})
                         await asyncio.sleep(planned_wait)
-                        req_counter += 1
-                        cooldown_stats.verification_attempts += 1
-                        rec_ev = await self._send_single_probe(
-                            client, target_url, req.method, headers, req_counter, "cooldown", test_start, baseline_latency_ms
-                        )
-                        probes.append(rec_ev)
-                        observed_headers.update(rec_ev.ratelimit_headers)
-                        self._update_counters(counters, rec_ev)
-                        emit({"type": "probe", "probe": rec_ev.model_dump()})
+                        if counters.dispatched_requests < configured_budget:
+                            req_counter += 1
+                            cooldown_stats.verification_attempts += 1
+                            counters.dispatched_requests += 1
+                            counters.in_progress_requests += 1
+                            emit_progress("cooldown")
+                            rec_ev = await self._send_single_probe(
+                                client, target_url, req.method, headers, req_counter, "cooldown", test_start, baseline_latency_ms
+                            )
+                            probes.append(rec_ev)
+                            observed_headers.update(rec_ev.ratelimit_headers)
+                            self._update_counters(counters, rec_ev)
+                            emit({"type": "probe", "probe": rec_ev.model_dump()})
+                            emit_progress("cooldown")
 
-                        if rec_ev.accepted:
-                            cooldown_stats.recovery_verified = True
-                            cooldown_stats.first_recovery_sec = rec_ev.elapsed_sec
-                            if first_block_mono:
-                                cooldown_stats.observed_cooldown_sec = round(time.monotonic() - first_block_mono, 2)
-                            emit({"type": "info", "message": f"Target accepted recovery probe after {cooldown_stats.observed_cooldown_sec}s."})
-                        else:
-                            emit({"type": "warning", "message": "Target still throttled after server Retry-After period."})
+                            if rec_ev.accepted:
+                                cooldown_stats.recovery_verified = True
+                                cooldown_stats.first_recovery_sec = rec_ev.elapsed_sec
+                                if first_block_mono:
+                                    cooldown_stats.observed_cooldown_sec = round(time.monotonic() - first_block_mono, 2)
+                                emit({"type": "info", "message": f"Target accepted recovery probe after {cooldown_stats.observed_cooldown_sec}s."})
+                            else:
+                                emit({"type": "warning", "message": "Target still throttled after server Retry-After period."})
                 else:
-                    # Empirical stepped backoff recovery probes (bounded)
                     for wait_step in (1.5, 3.0, 5.0):
-                        if (time.monotonic() - test_start) + wait_step > req.max_analysis_duration_sec:
+                        if counters.dispatched_requests >= configured_budget:
+                            break
+                        if (time.monotonic() - test_start) + wait_step > deadline_sec:
                             break
                         await asyncio.sleep(wait_step)
                         req_counter += 1
                         cooldown_stats.verification_attempts += 1
+                        counters.dispatched_requests += 1
+                        counters.in_progress_requests += 1
+                        emit_progress("cooldown")
                         rec_ev = await self._send_single_probe(
                             client, target_url, req.method, headers, req_counter, "cooldown", test_start, baseline_latency_ms
                         )
@@ -511,6 +625,7 @@ class RateLimitAnalyzer:
                         observed_headers.update(rec_ev.ratelimit_headers)
                         self._update_counters(counters, rec_ev)
                         emit({"type": "probe", "probe": rec_ev.model_dump()})
+                        emit_progress("cooldown")
 
                         if rec_ev.accepted:
                             cooldown_stats.recovery_verified = True
@@ -532,26 +647,39 @@ class RateLimitAnalyzer:
             )
 
             # PHASE 5: Bounded Safe Frequency Verification
-            if req.verify_safe_pace and classification.detected_pattern != "immediate_access_block" and rec_rates.recommended_interval_sec <= 5.0:
+            available_for_verify = configured_budget - counters.dispatched_requests
+            if (
+                req.verify_safe_pace
+                and classification.detected_pattern != "immediate_access_block"
+                and rec_rates.recommended_interval_sec <= 5.0
+                and available_for_verify > 0
+            ):
                 emit({
                     "type": "status",
                     "phase": "verify",
                     "message": f"Phase 4: Verifying recommended pacing (sampling at {rec_rates.recommended_interval_sec:.2f}s spacing)...",
                 })
                 v_rounds = 0
-                v_sample_size = min(4, max(2, req.request_budget // 5))
+                v_sample_size = min(available_for_verify, 4)
                 v_success = 0
                 v_failed = 0
                 current_v_interval = rec_rates.recommended_interval_sec
 
-                while v_rounds < 2 and (time.monotonic() - test_start) < req.max_analysis_duration_sec:
+                while v_rounds < 2 and (time.monotonic() - test_start) < deadline_sec and counters.dispatched_requests < configured_budget:
                     v_rounds += 1
                     round_blocks = 0
-                    for _ in range(v_sample_size):
-                        if (time.monotonic() - test_start) >= req.max_analysis_duration_sec:
+                    probes_to_send = min(v_sample_size, configured_budget - counters.dispatched_requests)
+                    if probes_to_send <= 0:
+                        break
+                    for _ in range(probes_to_send):
+                        if (time.monotonic() - test_start) >= deadline_sec:
+                            deadline_reached = True
                             break
                         await asyncio.sleep(current_v_interval)
                         req_counter += 1
+                        counters.dispatched_requests += 1
+                        counters.in_progress_requests += 1
+                        emit_progress("verify")
                         v_ev = await self._send_single_probe(
                             client, target_url, req.method, headers, req_counter, "verify", test_start, baseline_latency_ms
                         )
@@ -559,6 +687,7 @@ class RateLimitAnalyzer:
                         observed_headers.update(v_ev.ratelimit_headers)
                         self._update_counters(counters, v_ev)
                         emit({"type": "probe", "probe": v_ev.model_dump()})
+                        emit_progress("verify")
                         if v_ev.accepted:
                             v_success += 1
                         else:
@@ -572,7 +701,6 @@ class RateLimitAnalyzer:
                         rec_rates.verification_summary = f"{v_success}/{v_success} verification requests succeeded at {current_v_interval:.2f}s spacing."
                         break
                     else:
-                        # Widen interval and retry once if budget allows
                         current_v_interval = round(current_v_interval * 1.5, 2)
                         safe_burst = max(1, safe_burst // 2)
                         rec_rates.verification_passed = False
@@ -588,6 +716,32 @@ class RateLimitAnalyzer:
                 rec_rates.recommended_rps = round(1.0 / current_v_interval, 2)
                 rec_rates.recommended_rpm = round(60.0 / current_v_interval, 1)
 
+        actual_duration = round(time.monotonic() - test_start, 2)
+        if is_cancelled and is_cancelled():
+            final_status = "cancelled"
+            completion_msg = f"Analysis cancelled by user: {counters.dispatched_requests} of {configured_budget} requests dispatched."
+        elif deadline_reached:
+            final_status = "partial"
+            completion_msg = f"Analysis partially completed: {counters.dispatched_requests} of {configured_budget} requests dispatched. Maximum analysis duration reached."
+        elif consecutive_blocks >= 3 and counters.completed_requests < configured_budget:
+            final_status = "partial"
+            completion_msg = f"Analysis partially completed: {counters.dispatched_requests} of {configured_budget} requests dispatched. Sustained rate limit wall encountered."
+        elif counters.completed_requests >= configured_budget:
+            final_status = "completed"
+            completion_msg = f"Analysis completed successfully: {counters.completed_requests} of {configured_budget} requests dispatched."
+        else:
+            final_status = "partial"
+            completion_msg = f"Analysis partially completed: {counters.dispatched_requests} of {configured_budget} requests dispatched."
+
+        if final_status == "partial":
+            rec_rates.is_provisional = True
+            if classification.confidence == "high":
+                classification.confidence = "medium"
+                classification.confidence_score = min(classification.confidence_score, 0.65)
+            classification.limitations.append(
+                f"Analysis was partially completed ({counters.dispatched_requests}/{configured_budget} requests dispatched). Recommendations are provisional."
+            )
+
         # Generate summary
         if classification.detected_pattern == "immediate_access_block":
             freq_summary = (
@@ -595,14 +749,16 @@ class RateLimitAnalyzer:
                 "WAF challenges, IP restrictions, or missing authorization credentials."
             )
         elif safe_burst > 1:
+            prov_text = " (Provisional)" if rec_rates.is_provisional else ""
             freq_summary = (
                 f"Send up to {safe_burst} requests concurrently (burst), then pace subsequent requests at "
-                f"1 request every {rec_rates.recommended_interval_sec:.2f}s (~{rec_rates.recommended_rpm:.0f} req/min) with ±15% jitter."
+                f"1 request every {rec_rates.recommended_interval_sec:.2f}s (~{rec_rates.recommended_rpm:.0f} req/min) with ±15% jitter.{prov_text}"
             )
         else:
+            prov_text = " (Provisional)" if rec_rates.is_provisional else ""
             freq_summary = (
                 f"Avoid bursts. Send 1 request at a time, spaced {rec_rates.recommended_interval_sec:.2f}s apart "
-                f"(~{rec_rates.recommended_rpm:.0f} req/min) with ±15% jitter."
+                f"(~{rec_rates.recommended_rpm:.0f} req/min) with ±15% jitter.{prov_text}"
             )
 
         profile = RateLimitProfile(
@@ -611,6 +767,12 @@ class RateLimitAnalyzer:
             created_at=created_at,
             target_url=target_url,
             method=req.method,
+            status=final_status,
+            completion_message=completion_msg,
+            configured_budget=configured_budget,
+            dispatched_requests=counters.dispatched_requests,
+            execution_deadline_sec=deadline_sec,
+            actual_duration_sec=actual_duration,
             robots_crawl_delay_sec=robots_delay,
             baseline_stats=baseline_stats,
             request_counters=counters,
@@ -624,26 +786,39 @@ class RateLimitAnalyzer:
         )
 
         result = AnalysisResult(profile=profile, probes=probes)
-        emit({"type": "complete", "result": result.model_dump()})
+        emit({
+            "type": "complete",
+            "status": final_status,
+            "message": completion_msg,
+            "result": result.model_dump(),
+        })
+        return result
         return result
 
     def _update_counters(self, counters: RequestCounters, ev: ProbeEvent) -> None:
-        counters.total_sent += 1
+        counters.completed_requests += 1
+        counters.total_sent = counters.completed_requests
+        counters.in_progress_requests = max(0, counters.in_progress_requests - 1)
         if ev.accepted:
+            counters.successful_requests += 1
             counters.accepted += 1
             if ev.throttled:
                 counters.suspected_throttled += 1
         else:
             if ev.confirmed_rate_limit:
+                counters.rate_limited_requests += 1
                 counters.confirmed_rate_limited += 1
             elif ev.error_type == "timeout":
+                counters.timed_out_requests += 1
                 counters.timeouts += 1
             elif ev.error_type in ("dns_error", "network_error"):
+                counters.network_errors += 1
                 counters.network_failures += 1
             elif ev.error_type in ("http_403_ambiguous", "http_503_unavail", "http_error"):
                 counters.http_errors += 1
             else:
                 counters.http_errors += 1
+        counters.remaining_budget = max(0, counters.configured_budget - counters.dispatched_requests)
 
     def _calculate_baseline(self, probes: List[ProbeEvent]) -> BaselineStats:
         if not probes:
@@ -773,23 +948,29 @@ class RateLimitAnalyzer:
                 )
 
             # No limit observed within budget
-            safe_int = max(probe_interval * 1.5, robots_delay or 0.0, 0.35)
+            safe_int = max(probe_interval, robots_delay or 0.0, 0.25)
             burst = max(1, min(total, 10))
+            is_insufficient = total < 5
+            conf = "insufficient" if is_insufficient else "medium"
+            conf_score = 0.35 if is_insufficient else 0.70
             supporting.append(f"All {total} budgeted requests passed cleanly at {probe_interval}s interval.")
             if robots_delay:
                 supporting.append(f"Incorporated robots.txt Crawl-delay ({robots_delay}s).")
+            explanation = "No rate limit observed within the tested budget."
+            if is_insufficient:
+                limitations.append(f"Sample size ({total} requests) is too small to reliably determine maximum throughput.")
             return (
                 PatternClassification(
                     detected_pattern="no_limit_observed",
-                    confidence="medium",
-                    confidence_score=0.65,
+                    confidence=conf,
+                    confidence_score=conf_score,
                     supporting_evidence=supporting,
                     contradictory_evidence=["Probe volume was limited to configured budget; higher throughput might trigger limits."],
                     observation_type="empirical_observations",
                     limitations=limitations,
-                    explanation=f"All {total} requests succeeded with no throttling detected within the tested budget.",
+                    explanation=explanation,
                 ),
-                self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval)),
+                self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval), is_provisional=is_insufficient),
                 burst,
             )
 
@@ -870,8 +1051,8 @@ class RateLimitAnalyzer:
             safe_burst,
         )
 
-    def _make_recommendations(self, interval_sec: float, max_obs: float = 1.0) -> RateRecommendations:
-        interval_sec = round(max(0.1, interval_sec), 2)
+    def _make_recommendations(self, interval_sec: float, max_obs: float = 1.0, is_provisional: bool = False) -> RateRecommendations:
+        interval_sec = round(max(0.05, interval_sec), 2)
         interval_ms = round(interval_sec * 1000.0, 1)
         rec_rps = round(1.0 / interval_sec, 2)
         rec_rpm = round(60.0 / interval_sec, 1)
@@ -886,4 +1067,5 @@ class RateLimitAnalyzer:
             recommended_rpm=rec_rpm,
             safety_margin_pct=25.0,
             verification_passed=None,
+            is_provisional=is_provisional,
         )
