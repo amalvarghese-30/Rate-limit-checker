@@ -70,6 +70,11 @@ class ProbeEvent(BaseModel):
     error_type: Optional[str] = None  # None, "http_429", "http_403_rate_limit", "http_403_ambiguous", "http_503_unavail", "http_error", "network_error", "dns_error", "timeout"
     block_reason: Optional[str] = None
     retry_after_sec: Optional[float] = None
+    scheduled_interval_ms: Optional[float] = None
+    actual_interval_ms: Optional[float] = None
+    rate_limit_limit: Optional[int] = None
+    rate_limit_remaining: Optional[int] = None
+    rate_limit_reset: Optional[float] = None
     ratelimit_headers: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -223,3 +228,44 @@ class JobStatus(BaseModel):
     completed_at: Optional[str] = None
     error: Optional[str] = None
     summary: Optional[Dict[str, Any]] = None
+
+
+class ExecutionRequest(BaseModel):
+    job_id: str
+    request_budget: int = Field(default=50, ge=1, le=500, description="Number of subsequent requests to execute")
+    custom_headers: Dict[str, str] = Field(default_factory=dict)
+
+
+class ExecutionRecord(BaseModel):
+    request_number: int
+    timestamp: str
+    scheduled_interval_ms: float
+    actual_interval_ms: float
+    status_code: Optional[int] = None
+    latency_ms: float
+    accepted: bool
+    rate_limited: bool
+    retry_after: Optional[float] = None
+    rate_limit_limit: Optional[int] = None
+    rate_limit_remaining: Optional[int] = None
+    rate_limit_reset: Optional[float] = None
+    error_type: Optional[str] = None
+
+
+class ExecutionStatus(BaseModel):
+    execution_id: str
+    job_id: str
+    target_url: str
+    status: Literal["running", "paused", "cooldown", "completed", "stopped", "failed"]
+    request_budget: int
+    completed_requests: int = 0
+    accepted_requests: int = 0
+    rate_limited_requests: int = 0
+    other_errors: int = 0
+    avg_latency_ms: float = 0.0
+    current_interval_ms: float = 500.0
+    next_request_in_sec: Optional[float] = None
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None

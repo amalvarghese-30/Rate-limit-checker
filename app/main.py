@@ -10,7 +10,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 
 from app.config import API_KEY, BASE_DIR
 from app.jobs import JobManager
-from app.models import AnalyzeRequest
+from app.models import AnalyzeRequest, ExecutionRequest
+from app.pacing import PacingEngine
 from app.storage import HistoryStore
 
 FRONTEND_HTML = BASE_DIR / "frontend" / "index.html"
@@ -32,6 +33,7 @@ app.add_middleware(
 
 store = HistoryStore()
 job_manager = JobManager(store=store)
+pacing_engine = PacingEngine(store=store)
 
 
 # Security Headers Middleware
@@ -287,3 +289,118 @@ if __name__ == "__main__":
     asyncio.run(main())
 '''
     return PlainTextResponse(code, media_type="text/x-python")
+
+
+# ==============================================================================
+# Module E: Automatic Pacing Engine Endpoints
+# ==============================================================================
+
+@app.post("/api/executions", dependencies=[Depends(verify_api_key)])
+async def create_execution(req: ExecutionRequest):
+    """
+    Starts an automatic request pacing execution based on an approved analysis profile.
+    """
+    res = store.get(req.job_id)
+    if not res:
+        job = job_manager.get_job(req.job_id)
+        if job and job.result:
+            res = job.result
+    if not res:
+        raise HTTPException(status_code=404, detail="Analysis profile not found for this job ID")
+
+    execution = pacing_engine.create_execution(res.profile, req)
+    await pacing_engine.start_execution(execution)
+    return {
+        "execution_id": execution.execution_id,
+        "status": execution.status.model_dump(),
+    }
+
+
+@app.get("/api/executions/{exec_id}")
+async def get_execution_status(exec_id: str):
+    execution = pacing_engine.get_execution(exec_id)
+    if execution:
+        return {
+            "execution_id": exec_id,
+            "status": execution.status.model_dump(),
+            "records": [r.model_dump() for r in execution.records],
+        }
+    saved = store.get_execution(exec_id)
+    if saved:
+        return saved
+    raise HTTPException(status_code=404, detail="Execution not found")
+
+
+@app.post("/api/executions/{exec_id}/pause", dependencies=[Depends(verify_api_key)])
+async def pause_execution(exec_id: str):
+    execution = pacing_engine.get_execution(exec_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Active execution not found")
+    execution.pause()
+    return {"execution_id": exec_id, "status": execution.status.status}
+
+
+@app.post("/api/executions/{exec_id}/resume", dependencies=[Depends(verify_api_key)])
+async def resume_execution(exec_id: str):
+    execution = pacing_engine.get_execution(exec_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Active execution not found")
+    execution.resume()
+    return {"execution_id": exec_id, "status": execution.status.status}
+
+
+@app.post("/api/executions/{exec_id}/stop", dependencies=[Depends(verify_api_key)])
+async def stop_execution(exec_id: str):
+    execution = pacing_engine.get_execution(exec_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Active execution not found")
+    execution.stop()
+    return {"execution_id": exec_id, "status": execution.status.status}
+
+
+@app.get("/api/executions/{exec_id}/stream")
+async def stream_execution_events(exec_id: str):
+    execution = pacing_engine.get_execution(exec_id)
+    if not execution:
+        saved = store.get_execution(exec_id)
+        if saved:
+            async def single_saved_gen():
+                yield f"data: {json.dumps({'type': 'execution_complete', 'status': saved})}\n\n"
+            return StreamingResponse(single_saved_gen(), media_type="text/event-stream")
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    queue = execution.add_subscriber()
+
+    async def event_generator():
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item)}\n\n"
+        finally:
+            execution.remove_subscriber(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/executions", dependencies=[Depends(verify_api_key)])
+async def list_executions(limit: int = Query(20, ge=1, le=100)):
+    active_list = [e.status.model_dump() for e in pacing_engine.active_executions.values()]
+    saved_list = store.list_executions(limit=limit)
+    seen = set()
+    merged = []
+    for item in active_list + saved_list:
+        eid = item.get("execution_id")
+        if eid and eid not in seen:
+            seen.add(eid)
+            merged.append(item)
+    return {"items": merged[:limit]}
+
+
+@app.delete("/api/executions/{exec_id}", dependencies=[Depends(verify_api_key)])
+async def delete_execution(exec_id: str):
+    if not store.delete_execution(exec_id):
+        raise HTTPException(status_code=404, detail="Execution not found in history")
+    return {"deleted": True, "execution_id": exec_id}
+

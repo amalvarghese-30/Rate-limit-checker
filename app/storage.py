@@ -81,6 +81,30 @@ class HistoryStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_target_url ON runs(target_url)")
 
+            # Automatic Pacing executions table
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS executions (
+                    execution_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    target_url TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    request_budget INTEGER NOT NULL,
+                    completed_requests INTEGER NOT NULL DEFAULT 0,
+                    accepted_requests INTEGER NOT NULL DEFAULT 0,
+                    rate_limited_requests INTEGER NOT NULL DEFAULT 0,
+                    other_errors INTEGER NOT NULL DEFAULT 0,
+                    avg_latency_ms REAL NOT NULL DEFAULT 0.0,
+                    current_interval_ms REAL NOT NULL DEFAULT 500.0,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT DEFAULT NULL,
+                    records_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_exec_created_at ON executions(created_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_exec_job_id ON executions(job_id)")
+
             # Record or update schema version
             row = conn.execute("SELECT version FROM schema_info").fetchone()
             if not row:
@@ -191,3 +215,65 @@ class HistoryStore:
                 "avg_interval_sec": avg_int,
                 "success_rate_pct": succ_pct,
             }
+
+    def save_execution(self, exec_status: Any, records: List[Any]) -> None:
+        with self._connect() as conn:
+            records_data = [r.model_dump() if hasattr(r, "model_dump") else r for r in records]
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO executions (
+                    execution_id, job_id, target_url, status, request_budget,
+                    completed_requests, accepted_requests, rate_limited_requests,
+                    other_errors, avg_latency_ms, current_interval_ms,
+                    created_at, completed_at, records_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    exec_status.execution_id,
+                    exec_status.job_id,
+                    exec_status.target_url,
+                    exec_status.status,
+                    exec_status.request_budget,
+                    exec_status.completed_requests,
+                    exec_status.accepted_requests,
+                    exec_status.rate_limited_requests,
+                    exec_status.other_errors,
+                    exec_status.avg_latency_ms,
+                    exec_status.current_interval_ms,
+                    exec_status.created_at,
+                    exec_status.completed_at,
+                    json.dumps(records_data),
+                ),
+            )
+
+    def get_execution(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM executions WHERE execution_id = ?", (execution_id,)
+            ).fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            res["records"] = json.loads(res.pop("records_json"))
+            return res
+
+    def list_executions(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT execution_id, job_id, target_url, status, request_budget,
+                       completed_requests, accepted_requests, rate_limited_requests,
+                       other_errors, avg_latency_ms, current_interval_ms,
+                       created_at, completed_at
+                FROM executions
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_execution(self, execution_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM executions WHERE execution_id = ?", (execution_id,))
+            return cur.rowcount > 0

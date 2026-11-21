@@ -333,6 +333,22 @@
     .badge-warn { background: var(--warn-bg); color: var(--warn-text); }
     .badge-bad { background: var(--bad-bg); color: var(--bad-text); }
     .badge-info { background: var(--info-bg); color: var(--info-text); }
+    .badge-purple { background: #f3e8ff; color: #6b21a8; }
+    .badge-gray { background: #f1f5f9; color: #475569; }
+
+    .progress-bar-wrap {
+      background: #e2e8f0;
+      border-radius: 999px;
+      height: 8px;
+      overflow: hidden;
+      margin: 10px 0 14px;
+    }
+    .progress-bar-fill {
+      background: var(--accent);
+      height: 100%;
+      width: 0%;
+      transition: width 0.2s ease;
+    }
 
     .history-item {
       display: flex; align-items: center; justify-content: space-between;
@@ -531,7 +547,108 @@
         </div>
       </div>
 
-      <!-- Rate-Limiting Behavior & Evidence Card -->
+      <!-- Automatic Pacing Engine (Stage 2 Execution) Card -->
+      <div class="card" id="pacing-card">
+        <div class="section-head">
+          <div class="section-title">Automatic Pacing Engine · Stage 2 Scheduled Execution</div>
+          <span class="badge badge-info" id="pacing-mode-badge">Adaptive Request Pacer</span>
+        </div>
+        <p style="font-size: 13px; color: var(--muted); margin: 0 0 14px;">
+          Deploy this verified profile to reliably pace subsequent authorized requests. The engine dynamically schedules requests, applies AIMD adaptive backoff upon throttling, tracks remaining quota headers, and provides interactive pause/resume/stop controls.
+        </p>
+
+        <!-- Pacing Configuration Form -->
+        <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+          <div style="display: grid; grid-template-columns: 2fr 100px 120px 90px auto; gap: 10px; align-items: end;">
+            <div>
+              <label for="exec-target-url">Target Endpoint</label>
+              <input type="url" id="exec-target-url" placeholder="https://api.example.com/data" />
+            </div>
+            <div>
+              <label for="exec-budget">Total Requests</label>
+              <input type="number" id="exec-budget" min="1" max="1000" value="50" />
+            </div>
+            <div>
+              <label for="exec-interval">Interval (ms)</label>
+              <input type="number" id="exec-interval" min="50" max="60000" value="500" />
+            </div>
+            <div>
+              <label for="exec-burst">Burst Limit</label>
+              <input type="number" id="exec-burst" min="1" max="20" value="1" />
+            </div>
+            <button type="button" id="btn-start-execution" style="background: #2563eb; color: #fff; height: 38px;">
+              ▶ Start Pacing
+            </button>
+          </div>
+          <div style="display: flex; gap: 14px; align-items: center; margin-top: 10px; font-size: 12px; color: var(--muted);">
+            <label style="margin: 0; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="checkbox" id="exec-adaptive" checked /> Enable Adaptive Backoff &amp; Quota Guardrails
+            </label>
+            <span style="color: #94a3b8;">|</span>
+            <span>Safety: First request fires immediately; subsequent requests are scheduled with sub-millisecond precision.</span>
+          </div>
+        </div>
+
+        <!-- Live Execution Telemetry & Controls Panel -->
+        <div id="exec-live-panel" class="hidden" style="border-top: 1px solid var(--border); padding-top: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span class="pulse" id="exec-pulse"></span>
+              <strong style="font-size: 13px;">Execution ID:</strong>
+              <span class="mono" id="exec-id-val" style="font-size: 12.5px;">-</span>
+              <span class="badge badge-ok" id="exec-status-badge">RUNNING</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn-ghost" id="btn-exec-pause">⏸ Pause</button>
+              <button type="button" class="btn-ghost hidden" id="btn-exec-resume">▶ Resume</button>
+              <button type="button" class="btn-danger" id="btn-exec-stop">⏹ Stop Execution</button>
+            </div>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" id="exec-progress-bar"></div>
+          </div>
+
+          <!-- Live Metrics Grid -->
+          <div class="metrics" style="margin-bottom: 14px;">
+            <div class="metric">
+              <div class="metric-label">Completed / Total</div>
+              <div class="metric-value" id="exec-m-completed">0 / 0</div>
+              <div class="metric-sub" id="exec-m-pct">0% finished</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Accepted (2xx/3xx)</div>
+              <div class="metric-value" style="color: var(--ok);" id="exec-m-accepted">0</div>
+              <div class="metric-sub">delivered successfully</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Rate Limited (429)</div>
+              <div class="metric-value" style="color: var(--bad);" id="exec-m-limited">0</div>
+              <div class="metric-sub" id="exec-m-limited-sub">0 backoffs applied</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Other Errors</div>
+              <div class="metric-value" style="color: var(--warn);" id="exec-m-errors">0</div>
+              <div class="metric-sub">5xx or network errors</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Current Pacing Interval</div>
+              <div class="metric-value" id="exec-m-interval">0 ms</div>
+              <div class="metric-sub" id="exec-m-latency">avg latency: 0 ms</div>
+            </div>
+          </div>
+
+          <!-- Live Execution Timeline Dots -->
+          <div style="font-size: 11.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; margin-bottom: 6px;">
+            Live Request Stream:
+          </div>
+          <div class="timeline" id="exec-timeline" style="margin-bottom: 10px;"></div>
+
+          <!-- Live Execution Log Stream -->
+          <div class="log-box" id="exec-log" style="max-height: 180px;"></div>
+        </div>
+      </div>
       <div class="card">
         <div class="section-head">
           <div class="section-title">Rate-Limit Behavior &amp; Evidence</div>
@@ -605,6 +722,15 @@
         <button type="button" class="btn-ghost" onclick="loadHistory()">Refresh History</button>
       </div>
       <div id="history-list" style="color: var(--muted); font-size: 13px;">Loading history...</div>
+    </div>
+
+    <!-- Pacing Executions History Card -->
+    <div class="card" id="executions-card">
+      <div class="section-head">
+        <div class="section-title">Saved Pacing Executions (Stage 2)</div>
+        <button type="button" class="btn-ghost" onclick="loadExecutions()">Refresh Executions</button>
+      </div>
+      <div id="executions-list" style="color: var(--muted); font-size: 13px;">Loading executions...</div>
     </div>
   </div>
 
@@ -833,6 +959,14 @@
       const probes = data.probes;
       document.getElementById("results").classList.remove("hidden");
 
+      // Pre-fill Stage 2 Automatic Pacing Engine controls
+      const execUrlEl = document.getElementById("exec-target-url");
+      if (execUrlEl) execUrlEl.value = p.target_url;
+      const execIntEl = document.getElementById("exec-interval");
+      if (execIntEl && p.rate_recommendations) execIntEl.value = p.rate_recommendations.recommended_interval_ms || 500;
+      const execBurstEl = document.getElementById("exec-burst");
+      if (execBurstEl) execBurstEl.value = p.safe_burst_size || 1;
+
       document.getElementById("m-summary").textContent = p.frequency_summary;
       document.getElementById("m-burst").textContent = `${p.safe_burst_size} req`;
       document.getElementById("m-interval").textContent = `${p.rate_recommendations.recommended_interval_sec}s (${p.rate_recommendations.recommended_interval_ms}ms)`;
@@ -982,9 +1116,292 @@
       }
     }
 
+    // -------------------------------------------------------------
+    // Stage 2: Automatic Pacing Engine (Live Execution & Telemetry)
+    // -------------------------------------------------------------
+    let activeExecId = null;
+
+    function getCustomHeaders() {
+      const raw = document.getElementById("customHeaders").value.trim();
+      if (!raw) return {};
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return {};
+      }
+    }
+
+    function appendExecLog(msg) {
+      const box = document.getElementById("exec-log");
+      if (!box) return;
+      const line = document.createElement("div");
+      line.className = "log-line";
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function execDotHtml(rec) {
+      const cls = rec.rate_limited ? "dot dot-bad" : rec.accepted ? "dot dot-ok" : "dot dot-warn";
+      const reqNum = rec.request_number ?? rec.request_num ?? 0;
+      const tip = `#${reqNum} · HTTP ${rec.status_code ?? "ERR"} · ${rec.latency_ms}ms · Paced: ${rec.scheduled_interval_ms}ms${rec.rate_limit_remaining != null ? ` · Rem: ${rec.rate_limit_remaining}` : ""}`;
+      return `<div class="${cls}" title="${tip}">${reqNum}</div>`;
+    }
+
+    function updateExecBadge(status) {
+      const badge = document.getElementById("exec-status-badge");
+      if (!badge) return;
+      const s = typeof status === "object" ? status?.status : status;
+      badge.textContent = (s || "UNKNOWN").toUpperCase();
+      if (s === "running") badge.className = "badge badge-ok";
+      else if (s === "paused") badge.className = "badge badge-warn";
+      else if (s === "cooldown") badge.className = "badge badge-purple";
+      else if (s === "stopped") badge.className = "badge badge-gray";
+      else if (s === "completed") badge.className = "badge badge-ok";
+      else badge.className = "badge badge-bad";
+    }
+
+    async function startExecution() {
+      const jobId = currentResult?.profile?.job_id;
+      if (!jobId) {
+        alert("Please complete an analysis first (or select a saved run) to generate the pacing profile before starting Stage 2 execution.");
+        return;
+      }
+
+      const targetUrl = document.getElementById("exec-target-url").value.trim() || currentResult?.profile?.target_url;
+      const totalRequests = parseInt(document.getElementById("exec-budget").value, 10);
+      const baseInterval = parseInt(document.getElementById("exec-interval").value, 10);
+      const customHeaders = getCustomHeaders();
+
+      const btnStart = document.getElementById("btn-start-execution");
+      btnStart.disabled = true;
+      btnStart.textContent = "Starting...";
+
+      const panel = document.getElementById("exec-live-panel");
+      panel.classList.remove("hidden");
+      document.getElementById("exec-timeline").innerHTML = "";
+      document.getElementById("exec-log").innerHTML = "";
+
+      // Reset metrics
+      document.getElementById("exec-m-completed").textContent = `0 / ${totalRequests}`;
+      document.getElementById("exec-m-pct").textContent = "0% finished";
+      document.getElementById("exec-progress-bar").style.width = "0%";
+      document.getElementById("exec-m-accepted").textContent = "0";
+      document.getElementById("exec-m-limited").textContent = "0";
+      document.getElementById("exec-m-errors").textContent = "0";
+      document.getElementById("exec-m-interval").textContent = `${baseInterval} ms`;
+      document.getElementById("exec-m-latency").textContent = "avg latency: 0 ms";
+
+      const btnPause = document.getElementById("btn-exec-pause");
+      const btnResume = document.getElementById("btn-exec-resume");
+      const btnStop = document.getElementById("btn-exec-stop");
+      btnPause.classList.remove("hidden");
+      btnResume.classList.add("hidden");
+      btnStop.disabled = false;
+
+      let completedCount = 0;
+      let acceptedCount = 0;
+      let limitedCount = 0;
+      let errorCount = 0;
+      let totalLatency = 0;
+
+      try {
+        const initRes = await fetch("/api/executions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            job_id: jobId,
+            request_budget: totalRequests,
+            custom_headers: customHeaders,
+          }),
+        });
+
+        if (!initRes.ok) {
+          const errData = await initRes.json();
+          throw new Error(errData.detail || "Failed to start execution");
+        }
+
+        const data = await initRes.json();
+        activeExecId = data.execution_id;
+        document.getElementById("exec-id-val").textContent = activeExecId;
+        updateExecBadge(data.status);
+        appendExecLog(`Pacing engine active for ${targetUrl} [Execution ID: ${activeExecId}]`);
+
+        // Connect to SSE stream
+        const response = await fetch(`/api/executions/${activeExecId}/stream`);
+        if (!response.ok) throw new Error("Could not connect to execution SSE stream");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.startsWith("data: ")) continue;
+            const msg = JSON.parse(part.slice(6));
+
+            if (msg.type === "execution_status") {
+              const st = typeof msg.status === "object" ? msg.status.status : msg.status;
+              updateExecBadge(st);
+              if (msg.message) appendExecLog(msg.message);
+              if (st === "paused") {
+                btnPause.classList.add("hidden");
+                btnResume.classList.remove("hidden");
+              } else if (st === "running") {
+                btnPause.classList.remove("hidden");
+                btnResume.classList.add("hidden");
+              } else if (st === "stopped" || st === "completed" || st === "failed") {
+                btnPause.classList.add("hidden");
+                btnResume.classList.add("hidden");
+                btnStop.disabled = true;
+              }
+            } else if (msg.type === "execution_record") {
+              const rec = msg.record;
+              const reqNum = rec.request_number ?? rec.request_num ?? ++completedCount;
+              if (rec.accepted) acceptedCount++;
+              if (rec.rate_limited) limitedCount++;
+              if (!rec.accepted && !rec.rate_limited) errorCount++;
+              totalLatency += rec.latency_ms;
+
+              const pct = Math.min(100, Math.round((reqNum / totalRequests) * 100));
+              document.getElementById("exec-progress-bar").style.width = `${pct}%`;
+              document.getElementById("exec-m-completed").textContent = `${reqNum} / ${totalRequests}`;
+              document.getElementById("exec-m-pct").textContent = `${pct}% finished`;
+              document.getElementById("exec-m-accepted").textContent = acceptedCount;
+              document.getElementById("exec-m-limited").textContent = limitedCount;
+              document.getElementById("exec-m-errors").textContent = errorCount;
+              document.getElementById("exec-m-interval").textContent = `${rec.scheduled_interval_ms} ms`;
+              document.getElementById("exec-m-latency").textContent = `avg latency: ${Math.round(totalLatency / reqNum)} ms`;
+
+              document.getElementById("exec-timeline").insertAdjacentHTML("beforeend", execDotHtml(rec));
+              appendExecLog(`Req #${reqNum}: HTTP ${rec.status_code ?? "ERR"} (${rec.latency_ms}ms) | Paced: ${rec.scheduled_interval_ms}ms${rec.rate_limit_remaining != null ? ` | Quota Rem: ${rec.rate_limit_remaining}` : ""}`);
+            } else if (msg.type === "execution_complete") {
+              const compStatus = msg.status?.status || "completed";
+              updateExecBadge(compStatus);
+              appendExecLog(`Execution completed: ${msg.status?.accepted_requests ?? acceptedCount}/${msg.status?.request_budget ?? totalRequests} delivered cleanly.`);
+              btnPause.classList.add("hidden");
+              btnResume.classList.add("hidden");
+              btnStop.disabled = true;
+              loadExecutions();
+            }
+          }
+        }
+      } catch (err) {
+        appendExecLog(`Execution error: ${err.message}`);
+        updateExecBadge("failed");
+      } finally {
+        btnStart.disabled = false;
+        btnStart.textContent = "▶ Start Pacing";
+        loadExecutions();
+      }
+    }
+
+    async function pauseExecution() {
+      if (!activeExecId) return;
+      try {
+        await fetch(`/api/executions/${activeExecId}/pause`, { method: "POST" });
+        appendExecLog("Pause signal dispatched...");
+      } catch (e) {
+        appendExecLog("Pause error: " + e.message);
+      }
+    }
+
+    async function resumeExecution() {
+      if (!activeExecId) return;
+      try {
+        await fetch(`/api/executions/${activeExecId}/resume`, { method: "POST" });
+        appendExecLog("Resume signal dispatched...");
+      } catch (e) {
+        appendExecLog("Resume error: " + e.message);
+      }
+    }
+
+    async function stopExecution() {
+      if (!activeExecId) return;
+      try {
+        await fetch(`/api/executions/${activeExecId}/stop`, { method: "POST" });
+        appendExecLog("Stop signal dispatched...");
+      } catch (e) {
+        appendExecLog("Stop error: " + e.message);
+      }
+    }
+
+    async function loadExecutions() {
+      try {
+        const res = await fetch("/api/executions?limit=15");
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = document.getElementById("executions-list");
+        if (!list) return;
+        if (!data.items || !data.items.length) {
+          list.textContent = "No pacing executions recorded yet.";
+          return;
+        }
+        list.innerHTML = data.items.map(item => `
+          <div class="history-item">
+            <div style="flex:1;">
+              <span class="history-url" onclick="viewExecution('${item.execution_id}')">${item.target_url}</span>
+              <div class="mono" style="color:var(--muted); font-size:11.5px; margin-top:2px;">
+                ${(item.status || "UNKNOWN").toUpperCase()} · ${item.completed_requests}/${item.request_budget ?? item.total_requests ?? 0} reqs (${item.accepted_requests} ok, ${item.rate_limited_requests} blocked) · interval ${item.current_interval_ms}ms · avg ${Math.round(item.avg_latency_ms)}ms · ${item.created_at.slice(0,19).replace('T',' ')}
+              </div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button type="button" class="btn-ghost" onclick="viewExecution('${item.execution_id}')">View</button>
+              <button type="button" class="btn-danger" onclick="deleteExecution('${item.execution_id}')">✕</button>
+            </div>
+          </div>
+        `).join("");
+      } catch {}
+    }
+
+    async function viewExecution(execId) {
+      try {
+        const res = await fetch(`/api/executions/${execId}`);
+        if (!res.ok) return;
+        const d = await res.json();
+        const panel = document.getElementById("exec-live-panel");
+        panel.classList.remove("hidden");
+        document.getElementById("exec-id-val").textContent = d.execution_id;
+        updateExecBadge(d.status);
+        const budget = d.request_budget ?? d.total_requests ?? 1;
+        document.getElementById("exec-m-completed").textContent = `${d.completed_requests} / ${budget}`;
+        const pct = Math.round((d.completed_requests / budget) * 100) || 0;
+        document.getElementById("exec-m-pct").textContent = `${pct}% finished`;
+        document.getElementById("exec-progress-bar").style.width = `${pct}%`;
+        document.getElementById("exec-m-accepted").textContent = d.accepted_requests;
+        document.getElementById("exec-m-limited").textContent = d.rate_limited_requests;
+        document.getElementById("exec-m-errors").textContent = d.other_errors ?? d.error_requests ?? 0;
+        document.getElementById("exec-m-interval").textContent = `${d.current_interval_ms} ms`;
+        document.getElementById("exec-m-latency").textContent = `avg latency: ${Math.round(d.avg_latency_ms)} ms`;
+        panel.scrollIntoView({ behavior: "smooth" });
+      } catch {}
+    }
+
+    async function deleteExecution(execId) {
+      if (!confirm(`Delete execution run ${execId}?`)) return;
+      try {
+        await fetch(`/api/executions/${execId}`, { method: "DELETE" });
+        loadExecutions();
+      } catch (e) {
+        alert("Failed to delete execution: " + e.message);
+      }
+    }
+
+    document.getElementById("btn-start-execution").addEventListener("click", startExecution);
+    document.getElementById("btn-exec-pause").addEventListener("click", pauseExecution);
+    document.getElementById("btn-exec-resume").addEventListener("click", resumeExecution);
+    document.getElementById("btn-exec-stop").addEventListener("click", stopExecution);
+
     // Initial load
     fetchStats();
     loadHistory();
+    loadExecutions();
   </script>
 </body>
 </html>
