@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 class AnalyzeRequest(BaseModel):
     url: HttpUrl
     method: Literal["GET", "HEAD"] = "GET"
-    request_budget: int = Field(default=15, ge=1, le=500, description="Max total requests to send during probing")
-    probe_interval_sec: float = Field(default=0.3, ge=0.01, le=10.0, description="Baseline delay between requests in seconds")
-    burst_size: int = Field(default=3, ge=1, le=20, description="Initial burst grouping size")
-    max_analysis_duration_sec: Optional[float] = Field(default=None, ge=0.1, le=600.0, description="Hard cap on analysis runtime")
-    timeout_sec: float = Field(default=10.0, ge=0.1, le=30.0)
+    request_budget: int = Field(default=15, ge=1, description="Max total requests to send during probing")
+    probe_interval_sec: float = Field(default=0.3, ge=0.001, description="Baseline delay between requests in seconds")
+    burst_size: int = Field(default=3, ge=1, description="Initial burst grouping size")
+    max_analysis_duration_sec: Optional[float] = Field(default=None, ge=0.1, description="Hard cap on analysis runtime")
+    timeout_sec: float = Field(default=10.0, ge=0.1)
     check_cooldown: bool = True
     verify_safe_pace: bool = True
     check_robots: bool = True
@@ -257,7 +257,7 @@ class JobStatus(BaseModel):
 
 class ExecutionRequest(BaseModel):
     job_id: str
-    request_budget: int = Field(default=50, ge=1, le=500, description="Number of subsequent requests to execute")
+    request_budget: int = Field(default=50, ge=1, description="Number of subsequent requests to execute")
     custom_headers: Dict[str, str] = Field(default_factory=dict)
 
 

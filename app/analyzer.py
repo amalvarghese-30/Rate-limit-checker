@@ -370,7 +370,7 @@ class RateLimitAnalyzer:
             cooldown_est = 25.0 if req.check_cooldown else 0.0
             verify_est = 15.0 if req.verify_safe_pace else 0.0
             total_est = baseline_est + disc_est + cooldown_est + verify_est + 25.0
-            deadline_sec = max(45.0, min(600.0, total_est))
+            deadline_sec = max(45.0, total_est)
 
         emit({
             "type": "info",
