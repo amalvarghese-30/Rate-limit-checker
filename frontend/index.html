@@ -374,51 +374,23 @@
         <div class="brand-icon">RL</div>
         <div>
           <h1>Rate Limit Checker</h1>
-          <div class="subtitle">Multi-phase rate-limit discovery, recovery timing &amp; adaptive client generator</div>
+          <div class="subtitle">Find out how a website blocks requests, and get the exact safe speed to send them.</div>
         </div>
       </div>
-      <div id="health-indicator" class="badge badge-ok">Engine Online v2.0.0</div>
+      <div id="health-indicator" class="badge badge-ok">Online</div>
     </header>
 
-    <!-- Global Stats Dashboard -->
-    <div class="stats-grid">
-      <div class="stat-box">
-        <div class="stat-label">Total Analyses</div>
-        <div class="stat-val" id="stat-total">0</div>
-        <div class="stat-sub">completed runs</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Success Rate</div>
-        <div class="stat-val" id="stat-success">0%</div>
-        <div class="stat-sub">verified / clean passes</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Total Tested</div>
-        <div class="stat-val" id="stat-probes">0</div>
-        <div class="stat-sub">requests evaluated</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Blocked / Throttled</div>
-        <div class="stat-val" id="stat-blocked">0</div>
-        <div class="stat-sub">confirmed 429s/walls</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Avg Safe Interval</div>
-        <div class="stat-val" id="stat-interval">0.0s</div>
-        <div class="stat-sub">recommended pacing</div>
-      </div>
-    </div>
-
-    <!-- Analysis Form Card -->
+    <!-- Step 1: Test Form Card -->
     <div class="card">
-      <div class="notice-bar">
-        <strong>Permission Notice:</strong> All probing is strictly bounded and non-destructive. Ensure you own or have explicit authorization to test target APIs.
+      <div class="section-head" style="margin-bottom: 12px;">
+        <div class="section-title">1. Enter Website to Test</div>
+        <span style="font-size: 12px; color: var(--muted);">Only test websites you own or have permission to test.</span>
       </div>
 
       <form id="check-form">
         <div class="url-field">
-          <label for="url">Target URL (HTTP/HTTPS)</label>
-          <input id="url" type="url" placeholder="https://api.github.com/zen or http://127.0.0.1:8001/fixed-window" required />
+          <label for="url">Website URL</label>
+          <input id="url" type="url" placeholder="https://api.example.com/data" required />
         </div>
         <div>
           <label for="method">Method</label>
@@ -432,374 +404,407 @@
           </select>
         </div>
         <div>
-          <label for="maxRequests">Budget (Requests)</label>
+          <label for="maxRequests">Total Requests</label>
           <input id="maxRequests" type="number" min="1" value="15" required />
         </div>
         <div>
-          <label for="interval">Delay / Int (s)</label>
+          <label for="interval">Wait (sec)</label>
           <input id="interval" type="number" min="0.001" step="0.01" value="0.3" required />
         </div>
         <div>
-          <label for="burstSize">Burst Size</label>
+          <label for="burstSize">At Once</label>
           <input id="burstSize" type="number" min="1" value="3" required />
         </div>
-        <button id="submit-btn" type="submit">Analyze</button>
+        <button id="submit-btn" type="submit">Start Test</button>
       </form>
 
       <div class="controls-row">
         <div class="presets">
-          <span>Presets:</span>
-          <button type="button" class="preset-btn" onclick="applyPreset(5, 0.5, 1)">Gentle (5 req, 0.5s)</button>
-          <button type="button" class="preset-btn" onclick="applyPreset(15, 0.3, 3)">Real-World Safe (15 req, 0.3s)</button>
-          <button type="button" class="preset-btn" onclick="applyPreset(25, 0.15, 5)">Balanced (25 req, 0.15s)</button>
-          <button type="button" class="preset-btn" onclick="applyPreset(35, 0.05, 6)">Local Stress (35 req, 50ms)</button>
-        </div>
-        <div class="checks">
-          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
-            <input id="cooldown" type="checkbox" checked /> Cooldown Check
-          </label>
-          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
-            <input id="verify" type="checkbox" checked /> Verify Safe Pace
-          </label>
-          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
-            <input id="robots" type="checkbox" checked /> robots.txt
-          </label>
+          <span>Quick Presets:</span>
+          <button type="button" class="preset-btn" onclick="applyPreset(5, 0.5, 1)">Gentle (5 reqs)</button>
+          <button type="button" class="preset-btn" onclick="applyPreset(15, 0.3, 3)">Standard (15 reqs)</button>
+          <button type="button" class="preset-btn" onclick="applyPreset(25, 0.15, 5)">Medium (25 reqs)</button>
+          <button type="button" class="preset-btn" onclick="applyPreset(50, 0.05, 6)">Fast Test (50 reqs)</button>
         </div>
       </div>
 
-      <details style="margin-top: 14px;">
-        <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text);">Custom Headers (Authorization &amp; API Keys)</summary>
-        <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-          <span style="font-size: 11.5px; color: var(--muted);">Quick Insert:</span>
-          <button type="button" class="preset-btn" onclick="setHeaderTemplate('bearer')">+ Bearer Token</button>
-          <button type="button" class="preset-btn" onclick="setHeaderTemplate('apikey')">+ X-API-Key</button>
-          <button type="button" class="preset-btn" onclick="setHeaderTemplate('clear')">Clear</button>
-        </div>
-        <textarea id="customHeaders" rows="3" style="margin-top:8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;" placeholder='{
-  "Authorization": "Bearer <YOUR_TOKEN>"
-}'></textarea>
-        <div style="font-size: 11.5px; color: var(--muted); margin-top: 4px;">
-          Headers are sanitized for security. Sensitive tokens are masked in profiles and reports.
-        </div>
-      </details>
+      <details id="advanced-options" style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px;">
+        <summary style="cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--text);">
+          More Options (POST Body, Custom Headers &amp; Test Settings)
+        </summary>
 
-      <details id="body-section" style="margin-top: 10px;">
-        <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text);">Request Body (for POST / PUT / PATCH)</summary>
-        <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-          <label for="contentType" style="margin:0; font-size: 11.5px;">Content-Type:</label>
-          <select id="contentType" style="width: auto; padding: 4px 8px; font-size: 12px;">
-            <option value="application/json">application/json</option>
-            <option value="application/x-www-form-urlencoded">application/x-www-form-urlencoded</option>
-            <option value="text/plain">text/plain</option>
-          </select>
-          <button type="button" class="preset-btn" onclick="setBodyTemplate()">+ Sample JSON</button>
-          <button type="button" class="preset-btn" onclick="document.getElementById('requestBody').value = ''">Clear</button>
+        <div class="checks" style="margin-top: 12px; margin-bottom: 12px;">
+          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input id="cooldown" type="checkbox" checked /> Check wait time after block
+          </label>
+          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input id="verify" type="checkbox" checked /> Double-check safe speed
+          </label>
+          <label style="margin:0; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input id="robots" type="checkbox" checked /> Respect robots.txt rules
+          </label>
         </div>
-        <textarea id="requestBody" rows="3" style="margin-top:8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;" placeholder='{
+
+        <details id="body-section" style="margin-top: 10px;">
+          <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text);">Request Body (for POST / PUT / PATCH)</summary>
+          <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <label for="contentType" style="margin:0; font-size: 11.5px;">Format:</label>
+            <select id="contentType" style="width: auto; padding: 4px 8px; font-size: 12px;">
+              <option value="application/json">JSON (application/json)</option>
+              <option value="application/x-www-form-urlencoded">Form Data</option>
+              <option value="text/plain">Plain Text</option>
+            </select>
+            <button type="button" class="preset-btn" onclick="setBodyTemplate()">+ Sample JSON</button>
+            <button type="button" class="preset-btn" onclick="document.getElementById('requestBody').value = ''">Clear</button>
+          </div>
+          <textarea id="requestBody" rows="3" style="margin-top:8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;" placeholder='{
   "query": "test",
   "limit": 10
 }'></textarea>
+        </details>
+
+        <details style="margin-top: 10px;">
+          <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text);">Custom Headers (API Keys, Auth Tokens)</summary>
+          <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <span style="font-size: 11.5px; color: var(--muted);">Quick Add:</span>
+            <button type="button" class="preset-btn" onclick="setHeaderTemplate('bearer')">+ Bearer Token</button>
+            <button type="button" class="preset-btn" onclick="setHeaderTemplate('apikey')">+ X-API-Key</button>
+            <button type="button" class="preset-btn" onclick="setHeaderTemplate('clear')">Clear</button>
+          </div>
+          <textarea id="customHeaders" rows="3" style="margin-top:8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;" placeholder='{
+  "Authorization": "Bearer <YOUR_TOKEN>"
+}'></textarea>
+          <div style="font-size: 11.5px; color: var(--muted); margin-top: 4px;">
+            Tokens are hidden automatically when saving reports.
+          </div>
+        </details>
       </details>
     </div>
 
-    <!-- Live Execution Status Bar -->
+    <!-- Live Status Bar -->
     <div id="status-bar" class="status-bar">
       <div>
         <span class="pulse"></span>
-        <strong id="status-phase">INIT:</strong> <span id="status-text">Starting...</span>
+        <strong id="status-phase">STARTING:</strong> <span id="status-text">Getting ready...</span>
       </div>
       <div style="display:flex; align-items:center; gap:10px;">
-        <span class="mono" id="status-count">0 probes</span>
-        <button type="button" class="btn-danger" id="cancel-btn" onclick="cancelCurrentJob()">Cancel</button>
+        <span class="mono" id="status-count">0 sent</span>
+        <button type="button" class="btn-danger" id="cancel-btn" onclick="cancelCurrentJob()">Cancel Test</button>
       </div>
     </div>
 
     <div id="error-box" class="error-box"></div>
 
-    <!-- Live Probe Activity Card -->
+    <!-- Live Progress Card -->
     <div id="live-card" class="card hidden">
       <div class="section-head">
-        <div class="section-title">Live Probe Activity</div>
+        <div class="section-title">Live Test Progress</div>
         <span id="live-time" class="mono" style="font-size:12px; color:var(--muted);">0.0s elapsed</span>
       </div>
 
-      <!-- Detailed 8-Point Live Progress Grid -->
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 12px;">
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">Budget</div>
+          <div class="stat-label" style="font-size: 10px;">Planned</div>
           <div class="stat-val" style="font-size: 16px;" id="cnt-budget">0</div>
         </div>
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">Dispatched</div>
+          <div class="stat-label" style="font-size: 10px;">Sent</div>
           <div class="stat-val" style="font-size: 16px;" id="cnt-dispatched">0</div>
         </div>
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">Completed</div>
+          <div class="stat-label" style="font-size: 10px;">Finished</div>
           <div class="stat-val" style="font-size: 16px;" id="cnt-completed">0</div>
         </div>
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">In Progress</div>
+          <div class="stat-label" style="font-size: 10px;">Running Now</div>
           <div class="stat-val" style="font-size: 16px; color: var(--accent);" id="cnt-inprogress">0</div>
         </div>
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">Remaining</div>
+          <div class="stat-label" style="font-size: 10px;">Left</div>
           <div class="stat-val" style="font-size: 16px;" id="cnt-remaining">0</div>
         </div>
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">Phase</div>
+          <div class="stat-label" style="font-size: 10px;">Step</div>
           <div class="stat-val" style="font-size: 13px; text-transform: uppercase;" id="cnt-phase">-</div>
         </div>
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">Elapsed</div>
+          <div class="stat-label" style="font-size: 10px;">Time Spent</div>
           <div class="stat-val" style="font-size: 16px;" id="cnt-elapsed">0.0s</div>
         </div>
         <div class="stat-box" style="padding: 8px 10px;">
-          <div class="stat-label">Est. Remaining</div>
+          <div class="stat-label" style="font-size: 10px;">Time Left</div>
           <div class="stat-val" style="font-size: 16px;" id="cnt-eta">—</div>
         </div>
       </div>
 
       <div class="live-counters">
-        <span>Accepted: <span class="live-counter-val" style="color:var(--ok);" id="cnt-ok">0</span></span>
-        <span>Confirmed 429: <span class="live-counter-val" style="color:var(--bad);" id="cnt-429">0</span></span>
-        <span>Throttled (Latency): <span class="live-counter-val" style="color:var(--warn);" id="cnt-slow">0</span></span>
-        <span>Network/DNS Errors: <span class="live-counter-val" style="color:#64748b;" id="cnt-net">0</span></span>
+        <span>Allowed: <span class="live-counter-val" style="color:var(--ok);" id="cnt-ok">0</span></span>
+        <span>Blocked (429): <span class="live-counter-val" style="color:var(--bad);" id="cnt-429">0</span></span>
+        <span>Slowed Down: <span class="live-counter-val" style="color:var(--warn);" id="cnt-slow">0</span></span>
+        <span>Failed / Timeout: <span class="live-counter-val" style="color:#64748b;" id="cnt-net">0</span></span>
       </div>
       <div class="timeline" id="live-timeline"></div>
-      <div class="log-box" id="live-log"></div>
+      <details open style="margin-top: 10px;">
+        <summary style="cursor:pointer; font-size:12px; color:var(--muted);">Live Activity Log</summary>
+        <div class="log-box" id="live-log" style="margin-top:6px;"></div>
+      </details>
     </div>
 
-    <!-- Completed Analysis Results View -->
+    <!-- Results Section -->
     <div id="results" class="hidden">
-      <!-- Status Notice Banner -->
       <div id="analysis-completion-banner" style="margin-bottom: 14px; padding: 12px 14px; border-radius: 6px; font-size: 13.5px; font-weight: 500;"></div>
-      <!-- Frequency Blueprint Card -->
+
+      <!-- Step 2: The Answer (Blocking Pattern + Exact Timing & Sending Guide) -->
       <div class="card">
         <div class="section-head">
-          <div class="section-title">Safe Frequency &amp; Burst Blueprint</div>
-          <div style="display:flex; gap:8px;">
-            <button type="button" class="btn-ghost" id="btn-export">Export JSON Profile</button>
-            <button type="button" class="btn-ghost" id="btn-copy-code">Copy Python Client</button>
+          <div class="section-title">2. Test Result: How This Website Blocks &amp; Safe Timing</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn-ghost" id="btn-export">Download Report (JSON)</button>
+            <button type="button" class="btn-ghost" id="btn-copy-code">Copy Python Code</button>
           </div>
         </div>
-        <div class="guide-summary" id="m-summary">-</div>
-        <div id="m-sending-pattern-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 12px 14px; margin-bottom: 14px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
-            <strong style="font-size: 13px; color: #166534;">Recommended Sending Pattern: <span id="m-sending-title">-</span></strong>
-            <span id="m-waf-badge" class="badge badge-info hidden"></span>
+
+        <!-- Blocking Pattern Summary -->
+        <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom: 6px;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span style="font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase;">Blocking Pattern:</span>
+              <span class="pattern-tag" id="m-pattern">-</span>
+              <span id="m-waf-badge" class="badge badge-info hidden"></span>
+            </div>
+            <span class="badge" id="m-confidence">-</span>
           </div>
-          <ul id="m-sending-steps" style="margin: 0; padding-left: 18px; font-size: 12.5px; color: #14532d; line-height: 1.55;"></ul>
+          <p class="pattern-desc" id="m-explanation" style="margin: 6px 0 0;">-</p>
         </div>
+
+        <!-- Recommended Sending Pattern & Exact Steps -->
+        <div id="m-sending-pattern-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+          <div style="font-size: 13.5px; font-weight: 600; color: #166534; margin-bottom: 6px;">
+            How You Should Send Requests: <span id="m-sending-title">-</span>
+          </div>
+          <div class="guide-summary" id="m-summary" style="background: rgba(255,255,255,0.7); border-color: #bbf7d0; color: #14532d; margin-bottom: 10px;">-</div>
+          <ul id="m-sending-steps" style="margin: 0; padding-left: 18px; font-size: 13px; color: #14532d; line-height: 1.6;"></ul>
+        </div>
+
+        <!-- 4 Key Numbers -->
         <div class="metrics">
           <div class="metric">
-            <div class="metric-label">Safe Burst Capacity</div>
+            <div class="metric-label">Send Together (Burst)</div>
             <div class="metric-value" id="m-burst">-</div>
-            <div class="metric-sub">max requests together</div>
+            <div class="metric-sub">max at the same time</div>
           </div>
           <div class="metric">
-            <div class="metric-label">Recommended Interval</div>
+            <div class="metric-label">Wait Between Requests</div>
             <div class="metric-value" id="m-interval">-</div>
             <div class="metric-sub" id="m-rps">- req/sec</div>
           </div>
           <div class="metric">
-            <div class="metric-label">Recommended Rate / Min</div>
+            <div class="metric-label">Safe Speed Per Minute</div>
             <div class="metric-value" id="m-rpm">-</div>
-            <div class="metric-sub" id="m-verify">unverified</div>
+            <div class="metric-sub" id="m-verify">not checked yet</div>
           </div>
           <div class="metric">
-            <div class="metric-label">Observed Cooldown</div>
+            <div class="metric-label">Wait After Block</div>
             <div class="metric-value" id="m-cooldown">-</div>
             <div class="metric-sub" id="m-blocked">- blocked</div>
           </div>
         </div>
       </div>
 
-      <!-- Automatic Pacing Engine (Stage 2 Execution) Card -->
+      <!-- Step 3: Visual Timeline & Request Details -->
+      <div class="card">
+        <div class="section-head">
+          <div class="section-title">3. Request Timeline &amp; Speed Chart</div>
+          <span id="m-robots-note" class="mono" style="color: var(--muted); font-size: 11.5px;"></span>
+        </div>
+
+        <div class="timeline" id="timeline"></div>
+        <div class="legend" style="margin-bottom: 12px;">
+          <span><i style="background: var(--ok);"></i> Allowed (OK)</span>
+          <span><i style="background: var(--warn);"></i> Slowed Down</span>
+          <span><i style="background: var(--bad);"></i> Blocked (429 / WAF)</span>
+        </div>
+
+        <div class="sparkline-wrap" style="margin-bottom: 12px;">
+          <div class="section-head" style="margin-bottom:6px;">
+            <div class="section-title" style="font-size: 12px;">Response Time Chart (ms)</div>
+            <div class="mono" id="m-latency-stats" style="color: var(--muted); font-size:11.5px;">-</div>
+          </div>
+          <svg id="sparkline" width="100%" height="64" viewBox="0 0 600 64" preserveAspectRatio="none"></svg>
+        </div>
+
+        <details style="margin-bottom: 10px;">
+          <summary style="font-size:12.5px; font-weight:500; color:var(--text); cursor:pointer;">Why we think this (Proof &amp; Server Headers)</summary>
+          <div style="margin-top: 10px;">
+            <ul class="evidence-list" id="m-evidence" style="margin-bottom: 10px;"></ul>
+            <pre id="m-headers">{}</pre>
+          </div>
+        </details>
+
+        <details>
+          <summary style="font-size:12.5px; font-weight:500; color:var(--text); cursor:pointer;">View Every Request Sent</summary>
+          <div style="margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; overflow-x: auto;">
+            <div style="padding: 10px 12px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); background:#f8fafc;">
+              <span style="font-size:12px; font-weight:600; color:var(--muted);">Filter Requests:</span>
+              <select id="log-filter" style="width:auto; padding:4px 8px; font-size:12px;">
+                <option value="all">Show All</option>
+                <option value="blocked">Blocked Only</option>
+                <option value="throttled">Slowed Down Only</option>
+                <option value="errors">Errors Only</option>
+              </select>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Step</th>
+                  <th>Sent At</th>
+                  <th>Gap</th>
+                  <th>Status</th>
+                  <th>Speed</th>
+                  <th>Outcome</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody id="probe-rows"></tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+
+      <!-- Step 4: Auto-Send Requests at Safe Speed -->
       <div class="card" id="pacing-card">
         <div class="section-head">
-          <div class="section-title">Automatic Pacing Engine · Stage 2 Scheduled Execution</div>
-          <span class="badge badge-info" id="pacing-mode-badge">Adaptive Request Pacer</span>
+          <div class="section-title">4. Auto-Send Requests at Safe Speed</div>
+          <span class="badge badge-info" id="pacing-mode-badge">Auto Pacer</span>
         </div>
         <p style="font-size: 13px; color: var(--muted); margin: 0 0 14px;">
-          Deploy this verified profile to reliably pace subsequent authorized requests. The engine dynamically schedules requests, applies AIMD adaptive backoff upon throttling, tracks remaining quota headers, and provides interactive pause/resume/stop controls.
+          Use the safe speed found above to send real requests automatically. If the website slows down or blocks, it pauses and adjusts speed on its own.
         </p>
 
-        <!-- Pacing Configuration Form -->
         <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 14px;">
           <div style="display: grid; grid-template-columns: 2fr 100px 120px 90px auto; gap: 10px; align-items: end;">
             <div>
-              <label for="exec-target-url">Target Endpoint</label>
+              <label for="exec-target-url">Website URL</label>
               <input type="url" id="exec-target-url" placeholder="https://api.example.com/data" />
             </div>
             <div>
-              <label for="exec-budget">Total Requests</label>
+              <label for="exec-budget">How Many</label>
               <input type="number" id="exec-budget" min="1" value="50" />
             </div>
             <div>
-              <label for="exec-interval">Interval (ms)</label>
+              <label for="exec-interval">Wait (ms)</label>
               <input type="number" id="exec-interval" min="1" value="500" />
             </div>
             <div>
-              <label for="exec-burst">Burst Limit</label>
+              <label for="exec-burst">At Once</label>
               <input type="number" id="exec-burst" min="1" value="1" />
             </div>
             <button type="button" id="btn-start-execution" style="background: #2563eb; color: #fff; height: 38px;">
-              ▶ Start Pacing
+              ▶ Start Sending
             </button>
           </div>
           <div style="display: flex; gap: 14px; align-items: center; margin-top: 10px; font-size: 12px; color: var(--muted);">
             <label style="margin: 0; display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="checkbox" id="exec-adaptive" checked /> Enable Adaptive Backoff &amp; Quota Guardrails
+              <input type="checkbox" id="exec-adaptive" checked /> Automatically slow down if blocked
             </label>
-            <span style="color: #94a3b8;">|</span>
-            <span>Safety: First request fires immediately; subsequent requests are scheduled with sub-millisecond precision.</span>
           </div>
         </div>
 
-        <!-- Live Execution Telemetry & Controls Panel -->
         <div id="exec-live-panel" class="hidden" style="border-top: 1px solid var(--border); padding-top: 14px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
             <div style="display: flex; align-items: center; gap: 10px;">
               <span class="pulse" id="exec-pulse"></span>
-              <strong style="font-size: 13px;">Execution ID:</strong>
+              <strong style="font-size: 13px;">Run ID:</strong>
               <span class="mono" id="exec-id-val" style="font-size: 12.5px;">-</span>
               <span class="badge badge-ok" id="exec-status-badge">RUNNING</span>
             </div>
             <div style="display: flex; gap: 8px;">
               <button type="button" class="btn-ghost" id="btn-exec-pause">⏸ Pause</button>
               <button type="button" class="btn-ghost hidden" id="btn-exec-resume">▶ Resume</button>
-              <button type="button" class="btn-danger" id="btn-exec-stop">⏹ Stop Execution</button>
+              <button type="button" class="btn-danger" id="btn-exec-stop">⏹ Stop</button>
             </div>
           </div>
 
-          <!-- Progress Bar -->
           <div class="progress-bar-wrap">
             <div class="progress-bar-fill" id="exec-progress-bar"></div>
           </div>
 
-          <!-- Live Metrics Grid -->
           <div class="metrics" style="margin-bottom: 14px;">
             <div class="metric">
-              <div class="metric-label">Completed / Total</div>
+              <div class="metric-label">Sent / Total</div>
               <div class="metric-value" id="exec-m-completed">0 / 0</div>
-              <div class="metric-sub" id="exec-m-pct">0% finished</div>
+              <div class="metric-sub" id="exec-m-pct">0% done</div>
             </div>
             <div class="metric">
-              <div class="metric-label">Accepted (2xx/3xx)</div>
+              <div class="metric-label">Allowed</div>
               <div class="metric-value" style="color: var(--ok);" id="exec-m-accepted">0</div>
-              <div class="metric-sub">delivered successfully</div>
+              <div class="metric-sub">succeeded</div>
             </div>
             <div class="metric">
-              <div class="metric-label">Rate Limited (429)</div>
+              <div class="metric-label">Blocked (429)</div>
               <div class="metric-value" style="color: var(--bad);" id="exec-m-limited">0</div>
-              <div class="metric-sub" id="exec-m-limited-sub">0 backoffs applied</div>
+              <div class="metric-sub" id="exec-m-limited-sub">0 pauses</div>
             </div>
             <div class="metric">
-              <div class="metric-label">Other Errors</div>
+              <div class="metric-label">Errors</div>
               <div class="metric-value" style="color: var(--warn);" id="exec-m-errors">0</div>
-              <div class="metric-sub">5xx or network errors</div>
+              <div class="metric-sub">failed requests</div>
             </div>
             <div class="metric">
-              <div class="metric-label">Current Pacing Interval</div>
+              <div class="metric-label">Current Wait</div>
               <div class="metric-value" id="exec-m-interval">0 ms</div>
-              <div class="metric-sub" id="exec-m-latency">avg latency: 0 ms</div>
+              <div class="metric-sub" id="exec-m-latency">avg speed: 0 ms</div>
             </div>
           </div>
 
-          <!-- Live Execution Timeline Dots -->
-          <div style="font-size: 11.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; margin-bottom: 6px;">
-            Live Request Stream:
-          </div>
           <div class="timeline" id="exec-timeline" style="margin-bottom: 10px;"></div>
-
-          <!-- Live Execution Log Stream -->
-          <div class="log-box" id="exec-log" style="max-height: 180px;"></div>
+          <div class="log-box" id="exec-log" style="max-height: 160px;"></div>
         </div>
-      </div>
-      <div class="card">
-        <div class="section-head">
-          <div class="section-title">Rate-Limit Behavior &amp; Evidence</div>
-          <div style="display:flex; gap:6px; align-items:center;">
-            <span class="pattern-tag" id="m-pattern">-</span>
-            <span class="badge" id="m-confidence">-</span>
-          </div>
-        </div>
-        <p class="pattern-desc" id="m-explanation">-</p>
-
-        <div style="margin-bottom: 12px;">
-          <div style="font-size: 11.5px; font-weight:600; color:var(--muted); text-transform:uppercase; margin-bottom: 4px;">Supporting Evidence:</div>
-          <ul class="evidence-list" id="m-evidence"></ul>
-        </div>
-
-        <div class="timeline" id="timeline"></div>
-        <div class="legend">
-          <span><i style="background: var(--ok);"></i> Accepted (2xx/3xx)</span>
-          <span><i style="background: var(--warn);"></i> Throttled / High Latency</span>
-          <span><i style="background: var(--bad);"></i> Rate Limited (429/WAF)</span>
-          <span id="m-robots-note" class="mono" style="margin-left:auto;"></span>
-        </div>
-
-        <!-- Latency Trend Sparkline -->
-        <div class="sparkline-wrap">
-          <div class="section-head" style="margin-bottom:6px;">
-            <div class="section-title">Latency Trend (ms)</div>
-            <div class="mono" id="m-latency-stats" style="color: var(--muted); font-size:11.5px;">-</div>
-          </div>
-          <svg id="sparkline" width="100%" height="64" viewBox="0 0 600 64" preserveAspectRatio="none"></svg>
-        </div>
-
-        <details>
-          <summary style="font-size:12px; color:var(--muted); cursor:pointer;">View Observed Rate-Limit Headers</summary>
-          <pre id="m-headers" style="margin-top:8px;">{}</pre>
-        </details>
-      </div>
-
-      <!-- Detailed Probe Log Table (Collapsible) -->
-      <div class="card" style="padding: 0; overflow-x: auto;">
-        <div style="padding: 14px 16px 10px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border);">
-          <div class="section-title" style="margin:0;">Detailed Probe Log</div>
-          <select id="log-filter" style="width:auto; padding:4px 8px; font-size:12px;">
-            <option value="all">All Probes</option>
-            <option value="blocked">Rate Limited Only</option>
-            <option value="throttled">Slow / Throttled Only</option>
-            <option value="errors">Errors / Failures</option>
-          </select>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Phase</th>
-              <th>Dispatched (Elapsed)</th>
-              <th>Actual Interval</th>
-              <th>Status</th>
-              <th>Latency</th>
-              <th>Result</th>
-              <th>Reason &amp; Retry-After</th>
-            </tr>
-          </thead>
-          <tbody id="probe-rows"></tbody>
-        </table>
       </div>
     </div>
 
-    <!-- History Card -->
-    <div class="card" id="history-card">
-      <div class="section-head">
-        <div class="section-title">Saved Analysis History</div>
-        <button type="button" class="btn-ghost" onclick="loadHistory()">Refresh History</button>
-      </div>
-      <div id="history-list" style="color: var(--muted); font-size: 13px;">Loading history...</div>
-    </div>
+    <!-- Past Tests & Overall Stats -->
+    <details class="card" id="history-card" open style="padding: 16px 20px;">
+      <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text);">
+        Past Tests &amp; Overall Stats
+      </summary>
 
-    <!-- Pacing Executions History Card -->
-    <div class="card" id="executions-card">
-      <div class="section-head">
-        <div class="section-title">Saved Pacing Executions (Stage 2)</div>
-        <button type="button" class="btn-ghost" onclick="loadExecutions()">Refresh Executions</button>
+      <div class="stats-grid" style="margin-top: 14px;">
+        <div class="stat-box">
+          <div class="stat-label">Tests Run</div>
+          <div class="stat-val" id="stat-total">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Pass Rate</div>
+          <div class="stat-val" id="stat-success">0%</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Requests Sent</div>
+          <div class="stat-val" id="stat-probes">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Times Blocked</div>
+          <div class="stat-val" id="stat-blocked">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Avg Safe Wait</div>
+          <div class="stat-val" id="stat-interval">0.0s</div>
+        </div>
       </div>
-      <div id="executions-list" style="color: var(--muted); font-size: 13px;">Loading executions...</div>
-    </div>
+
+      <div class="section-head" style="margin-top: 10px;">
+        <div class="section-title">Saved Website Tests</div>
+        <button type="button" class="btn-ghost" onclick="loadHistory()">Refresh</button>
+      </div>
+      <div id="history-list" style="color: var(--muted); font-size: 13px;">Loading past tests...</div>
+
+      <div class="section-head" style="margin-top: 18px;" id="executions-card">
+        <div class="section-title">Saved Auto-Send Runs</div>
+        <button type="button" class="btn-ghost" onclick="loadExecutions()">Refresh</button>
+      </div>
+      <div id="executions-list" style="color: var(--muted); font-size: 13px;">Loading runs...</div>
+    </details>
   </div>
 
   <script>
@@ -815,10 +820,24 @@
 
     function onMethodChange() {
       const m = document.getElementById("method").value;
+      const isBodyMethod = (m === "POST" || m === "PUT" || m === "PATCH");
+      const adv = document.getElementById("advanced-options");
       const bodySec = document.getElementById("body-section");
-      if (bodySec) {
-        bodySec.open = (m === "POST" || m === "PUT" || m === "PATCH");
-      }
+      if (adv && isBodyMethod) adv.open = true;
+      if (bodySec) bodySec.open = isBodyMethod;
+    }
+
+    function formatPatternName(code) {
+      const map = {
+        fixed_window: "Fixed Window (Blocks after limit, then resets)",
+        sliding_window: "Sliding Window (Rolling request limit)",
+        token_bucket: "Token Bucket (Allows short bursts, refills steadily)",
+        leaky_bucket: "Speed Limit / Slowdown (Delays requests when busy)",
+        header_guided: "Server Header Limit (Publishes its exact limit)",
+        immediate_access_block: "Blocked Immediately (WAF / Login / IP Block)",
+        no_limit_observed: "No Limit Hit (All requests allowed)",
+      };
+      return map[code] || code;
     }
 
     function setBodyTemplate() {
@@ -1086,12 +1105,12 @@
         }
       } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = "Analyze";
+        submitBtn.textContent = "Start Test";
         statusBar.style.display = "none";
         const cancelBtnEl = document.getElementById("cancel-btn");
         if (cancelBtnEl) {
           cancelBtnEl.disabled = false;
-          cancelBtnEl.textContent = "Cancel";
+          cancelBtnEl.textContent = "Cancel Test";
         }
         if (activeJobId && !currentResult) {
           try {
@@ -1174,25 +1193,25 @@
           ? steps.map(s => `<li>${s}</li>`).join("")
           : `<li>${p.frequency_summary}</li>`;
       }
-      document.getElementById("m-burst").textContent = `${p.safe_burst_size} req`;
+      document.getElementById("m-burst").textContent = `${p.safe_burst_size} at once`;
       document.getElementById("m-interval").textContent = `${p.rate_recommendations.recommended_interval_sec}s (${p.rate_recommendations.recommended_interval_ms}ms)`;
       document.getElementById("m-rps").textContent = `${p.rate_recommendations.recommended_rps} req/sec`;
-      document.getElementById("m-rpm").textContent = `${p.rate_recommendations.recommended_rpm} req/m`;
+      document.getElementById("m-rpm").textContent = `${p.rate_recommendations.recommended_rpm} / min`;
       document.getElementById("m-verify").textContent =
-        p.rate_recommendations.is_provisional ? "provisional (incomplete sample) ⚠" :
-        p.rate_recommendations.verification_passed === true ? "verified safe ✓" :
-        p.rate_recommendations.verification_passed === false ? "adjusted after verify ⚠" : "unverified estimate";
+        p.rate_recommendations.is_provisional ? "early estimate ⚠" :
+        p.rate_recommendations.verification_passed === true ? "tested & confirmed ✓" :
+        p.rate_recommendations.verification_passed === false ? "adjusted after check ⚠" : "estimated";
 
       document.getElementById("m-blocked").textContent =
-        `${p.request_counters.confirmed_rate_limited}/${p.request_counters.total_sent} (${p.block_rate_pct}%)`;
+        `${p.request_counters.confirmed_rate_limited} of ${p.request_counters.total_sent} blocked (${p.block_rate_pct}%)`;
       document.getElementById("m-cooldown").textContent =
         p.cooldown_stats.observed_cooldown_sec != null
           ? `~${p.cooldown_stats.observed_cooldown_sec}s`
-          : (p.cooldown_stats.server_retry_after_sec ? `Retry-After: ${p.cooldown_stats.server_retry_after_sec}s` : "none observed");
+          : (p.cooldown_stats.server_retry_after_sec ? `${p.cooldown_stats.server_retry_after_sec}s` : "none");
 
-      document.getElementById("m-pattern").textContent = p.pattern_classification.detected_pattern;
+      document.getElementById("m-pattern").textContent = formatPatternName(p.pattern_classification.detected_pattern);
       const confBadge = document.getElementById("m-confidence");
-      confBadge.textContent = `${p.pattern_classification.confidence.toUpperCase()} CONFIDENCE (${Math.round(p.pattern_classification.confidence_score * 100)}%)`;
+      confBadge.textContent = `${Math.round(p.pattern_classification.confidence_score * 100)}% Sure (${p.pattern_classification.confidence})`;
       confBadge.className = p.pattern_classification.confidence === "high" ? "badge badge-ok" : p.pattern_classification.confidence === "medium" ? "badge badge-warn" : "badge badge-info";
 
       document.getElementById("m-explanation").textContent = p.pattern_classification.explanation;
