@@ -226,10 +226,18 @@ class PacingEngine:
                     # Send request
                     start_mono = time.monotonic()
                     ts_iso = datetime.now(timezone.utc).isoformat()
+                    body_to_send = execution.request.request_body if execution.request.request_body is not None else profile.request_body
+                    req_kwargs = {"headers": headers, "follow_redirects": True}
+                    if profile.method in ("POST", "PUT", "PATCH") and body_to_send is not None:
+                        req_headers = dict(headers)
+                        if not any(k.lower() == "content-type" for k in req_headers):
+                            req_headers["Content-Type"] = getattr(profile, "content_type", "application/json")
+                        req_kwargs["headers"] = req_headers
+                        req_kwargs["content"] = body_to_send.encode("utf-8")
 
                     try:
                         resp = await client.request(
-                            profile.method, target_url, headers=headers, follow_redirects=True
+                            profile.method, target_url, **req_kwargs  # type: ignore[arg-type]
                         )
                         latency_ms = round((time.monotonic() - start_mono) * 1000.0, 1)
                         raw_headers = dict(resp.headers)

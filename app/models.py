@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 class AnalyzeRequest(BaseModel):
     url: HttpUrl
-    method: Literal["GET", "HEAD"] = "GET"
+    method: Literal["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH"] = "GET"
+    request_body: Optional[str] = Field(default=None, description="Optional JSON or raw request body for POST/PUT/PATCH requests")
+    content_type: str = Field(default="application/json", description="Content-Type for request_body")
     request_budget: int = Field(default=15, ge=1, description="Max total requests to send during probing")
     probe_interval_sec: float = Field(default=0.3, ge=0.001, description="Baseline delay between requests in seconds")
     burst_size: int = Field(default=3, ge=1, description="Initial burst grouping size")
@@ -90,9 +92,13 @@ class ProbeEvent(BaseModel):
 
 
 class PatternClassification(BaseModel):
-    detected_pattern: str  # fixed_window, sliding_window, token_bucket, leaky_bucket, header_guided, immediate_access_block, no_limit_observed, unknown_or_hybrid
+    detected_pattern: str  # fixed_window, sliding_window, token_bucket, leaky_bucket, header_guided, concurrency_limit, immediate_access_block, no_limit_observed, unknown_or_hybrid
     confidence: Literal["high", "medium", "low", "insufficient"]
     confidence_score: float = Field(ge=0.0, le=1.0)
+    detected_waf: Optional[str] = None
+    sending_pattern: str = "sequential_pacing"
+    sending_pattern_title: str = "Sequential Pacing"
+    sending_schedule_steps: List[str] = Field(default_factory=list)
     supporting_evidence: List[str] = Field(default_factory=list)
     contradictory_evidence: List[str] = Field(default_factory=list)
     observation_type: str = "empirical_observations"  # direct_headers, empirical_observations, inferred_with_uncertainty
@@ -133,6 +139,8 @@ class RateLimitProfile(BaseModel):
     created_at: str
     target_url: str
     method: str
+    request_body: Optional[str] = None
+    content_type: str = "application/json"
     status: Literal["completed", "partial", "cancelled", "failed"] = "completed"
     completion_message: str = "Analysis completed successfully."
     configured_budget: int = 0
@@ -259,6 +267,7 @@ class ExecutionRequest(BaseModel):
     job_id: str
     request_budget: int = Field(default=50, ge=1, description="Number of subsequent requests to execute")
     custom_headers: Dict[str, str] = Field(default_factory=dict)
+    request_body: Optional[str] = None
 
 
 class ExecutionRecord(BaseModel):

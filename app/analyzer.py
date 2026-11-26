@@ -116,6 +116,41 @@ def parse_ratelimit_limit(headers: Dict[str, str]) -> Optional[int]:
     return None
 
 
+def parse_ratelimit_remaining(headers: Dict[str, str]) -> Optional[int]:
+    for key in ("ratelimit-remaining", "x-ratelimit-remaining", "x-rate-limit-remaining"):
+        for hk, hv in headers.items():
+            if hk.lower() == key:
+                match = re.search(r"\d+", hv)
+                if match:
+                    return int(match.group(0))
+    return None
+
+
+def detect_waf_provider(headers: Dict[str, str]) -> Optional[str]:
+    """Identifies CDN/WAF/Gateway provider from observed response headers."""
+    hl = {k.lower(): str(v).lower() for k, v in headers.items()}
+    server = hl.get("server", "")
+    if "cf-ray" in hl or "cloudflare" in server:
+        return "Cloudflare"
+    if "x-amz-cf-id" in hl or "cloudfront" in server or "awselb" in server:
+        return "AWS CloudFront / WAF"
+    if any(k.startswith("x-akamai") for k in hl) or "akamai" in server:
+        return "Akamai"
+    if "x-datadome" in hl or "datadome" in server:
+        return "DataDome"
+    if "x-iinfo" in hl or "incapsula" in hl.get("x-cdn", ""):
+        return "Imperva / Incapsula"
+    if any(k.startswith("x-kong") for k in hl) or "kong" in server:
+        return "Kong API Gateway"
+    if any(k.startswith("x-envoy") for k in hl) or "envoy" in server:
+        return "Envoy Proxy"
+    if "nginx" in server:
+        return "Nginx"
+    if "fastly" in hl.get("via", "") or "fastly" in server:
+        return "Fastly"
+    return None
+
+
 def extract_interesting_headers(resp_headers: httpx.Headers) -> Dict[str, str]:
     result: Dict[str, str] = {}
     for k, v in resp_headers.items():
@@ -129,7 +164,14 @@ def extract_interesting_headers(resp_headers: httpx.Headers) -> Dict[str, str]:
                 "x-rate",
                 "cf-ray",
                 "x-cache",
+                "x-kong",
+                "x-envoy",
+                "x-amz",
+                "x-akamai",
+                "x-datadome",
+                "x-iinfo",
                 "server",
+                "via",
             )
         ):
             result[k] = v
@@ -246,16 +288,28 @@ class RateLimitAnalyzer:
         baseline_latency_ms: Optional[float] = None,
         scheduled_interval_ms: Optional[float] = None,
         actual_interval_ms: Optional[float] = None,
+        request_body: Optional[str] = None,
+        content_type: str = "application/json",
     ) -> ProbeEvent:
         start_mono = time.monotonic()
         ts = time.time()
 
         try:
+            req_kwargs: Dict[str, object] = {
+                "headers": headers,
+                "follow_redirects": True,
+            }
+            if method in ("POST", "PUT", "PATCH") and request_body is not None:
+                req_headers = dict(headers)
+                if not any(k.lower() == "content-type" for k in req_headers):
+                    req_headers["Content-Type"] = content_type
+                req_kwargs["headers"] = req_headers
+                req_kwargs["content"] = request_body.encode("utf-8")
+
             resp = await client.request(
                 method,
                 url,
-                headers=headers,
-                follow_redirects=True,
+                **req_kwargs,  # type: ignore[arg-type]
             )
             elapsed_sec = round(time.monotonic() - test_start, 2)
             latency_ms = round((time.monotonic() - start_mono) * 1000, 2)
@@ -294,6 +348,9 @@ class RateLimitAnalyzer:
                 retry_after_sec=parse_retry_after(resp.headers.get("retry-after")),
                 scheduled_interval_ms=scheduled_interval_ms,
                 actual_interval_ms=actual_interval_ms,
+                rate_limit_limit=parse_ratelimit_limit(raw_headers),
+                rate_limit_remaining=parse_ratelimit_remaining(raw_headers),
+                rate_limit_reset=parse_ratelimit_reset(raw_headers),
                 ratelimit_headers=extract_interesting_headers(resp.headers),
             )
         except Exception as exc:
@@ -451,7 +508,15 @@ class RateLimitAnalyzer:
                 counters.in_progress_requests += 1
                 emit_progress("baseline")
                 b_ev = await self._send_single_probe(
-                    client, target_url, req.method, headers, req_counter, "baseline", test_start
+                    client,
+                    target_url,
+                    req.method,
+                    headers,
+                    req_counter,
+                    "baseline",
+                    test_start,
+                    request_body=req.request_body,
+                    content_type=req.content_type,
                 )
                 probes.append(b_ev)
                 baseline_probes.append(b_ev)
@@ -496,7 +561,10 @@ class RateLimitAnalyzer:
                 })
                 last_batch_mono: Optional[float] = None
 
-                while counters.dispatched_requests < configured_budget:
+                verify_reserve = 3 if (req.verify_safe_pace and configured_budget >= 12) else 0
+                discovery_cap = configured_budget - verify_reserve
+
+                while counters.dispatched_requests < discovery_cap:
                     if is_cancelled and is_cancelled():
                         break
                     if (time.monotonic() - test_start) >= deadline_sec:
@@ -504,7 +572,7 @@ class RateLimitAnalyzer:
                         emit({"type": "warning", "message": "Maximum analysis duration reached. Stopping probes."})
                         break
 
-                    batch_size = min(concurrency, configured_budget - counters.dispatched_requests)
+                    batch_size = min(concurrency, discovery_cap - counters.dispatched_requests)
                     if batch_size <= 0:
                         break
 
@@ -534,6 +602,8 @@ class RateLimitAnalyzer:
                             baseline_latency_ms=baseline_latency_ms,
                             scheduled_interval_ms=batch_scheduled_interval,
                             actual_interval_ms=batch_actual_interval,
+                            request_body=req.request_body,
+                            content_type=req.content_type,
                         )
                         self._update_counters(counters, ev)
                         emit({"type": "probe", "probe": ev.model_dump()})
@@ -611,7 +681,8 @@ class RateLimitAnalyzer:
                             counters.in_progress_requests += 1
                             emit_progress("cooldown")
                             rec_ev = await self._send_single_probe(
-                                client, target_url, req.method, headers, req_counter, "cooldown", test_start, baseline_latency_ms
+                                client, target_url, req.method, headers, req_counter, "cooldown", test_start, baseline_latency_ms,
+                                request_body=req.request_body, content_type=req.content_type,
                             )
                             probes.append(rec_ev)
                             observed_headers.update(rec_ev.ratelimit_headers)
@@ -640,7 +711,8 @@ class RateLimitAnalyzer:
                         counters.in_progress_requests += 1
                         emit_progress("cooldown")
                         rec_ev = await self._send_single_probe(
-                            client, target_url, req.method, headers, req_counter, "cooldown", test_start, baseline_latency_ms
+                            client, target_url, req.method, headers, req_counter, "cooldown", test_start, baseline_latency_ms,
+                            request_body=req.request_body, content_type=req.content_type,
                         )
                         probes.append(rec_ev)
                         observed_headers.update(rec_ev.ratelimit_headers)
@@ -702,7 +774,8 @@ class RateLimitAnalyzer:
                         counters.in_progress_requests += 1
                         emit_progress("verify")
                         v_ev = await self._send_single_probe(
-                            client, target_url, req.method, headers, req_counter, "verify", test_start, baseline_latency_ms
+                            client, target_url, req.method, headers, req_counter, "verify", test_start, baseline_latency_ms,
+                            request_body=req.request_body, content_type=req.content_type,
                         )
                         probes.append(v_ev)
                         observed_headers.update(v_ev.ratelimit_headers)
@@ -804,6 +877,8 @@ class RateLimitAnalyzer:
             created_at=created_at,
             target_url=target_url,
             method=req.method,
+            request_body=req.request_body,
+            content_type=req.content_type,
             status=final_status,
             completion_message=completion_msg,
             configured_budget=configured_budget,
@@ -905,6 +980,7 @@ class RateLimitAnalyzer:
         throttled = [p for p in burst_probes if p.throttled]
         header_limit = parse_ratelimit_limit(observed_headers)
         header_reset = parse_ratelimit_reset(observed_headers)
+        waf_provider = detect_waf_provider(observed_headers)
 
         supporting: List[str] = []
         contradictory: List[str] = []
@@ -912,22 +988,46 @@ class RateLimitAnalyzer:
             "Rate limits can vary dynamically based on client IP, authenticated credentials, geographic region, and server load.",
             "Inferred thresholds reflect empirical observations within the test budget, not server-side implementation guarantees.",
         ]
+        if waf_provider:
+            supporting.append(f"Detected edge/gateway infrastructure: {waf_provider}.")
 
         # Case 1: Blocked immediately on request #1
         if first_block_idx == 1:
-            supporting.append("Target rejected request #1 unconditionally.")
+            first_probe = burst_probes[0] if burst_probes else None
+            first_status = first_probe.status_code if first_probe else None
+            supporting.append(f"Target rejected request #1 unconditionally (HTTP {first_status or 'ERR'}).")
             if any(sig in str(observed_headers).lower() for sig in WAF_SIGNATURES):
                 supporting.append("WAF / security filtering signature found in headers/body.")
+            if first_status in (400, 404, 405, 422):
+                explanation = (
+                    f"Endpoint returned HTTP {first_status} on request #1. Verify URL, HTTP method, or POST body payload "
+                    "before running rate-limit analysis."
+                )
+                steps = [
+                    f"Resolve HTTP {first_status} on request #1 (check URL path, HTTP method, or JSON body).",
+                    "Re-run analysis once a single request returns HTTP 200/2xx.",
+                ]
+            else:
+                explanation = "Blocked on request #1. Indicates WAF filtering, IP ban, or missing authentication rather than an ongoing rate counter."
+                steps = [
+                    "Do not send automated traffic yet — request #1 was rejected immediately.",
+                    "Provide valid authentication headers (Authorization / X-API-Key) or resolve WAF/bot challenge.",
+                    "Re-test with a small budget (5 requests) at 1.0s spacing once access is verified.",
+                ]
             return (
                 PatternClassification(
                     detected_pattern="immediate_access_block",
                     confidence="high",
                     confidence_score=0.95,
+                    detected_waf=waf_provider,
+                    sending_pattern="blocked_resolve_first",
+                    sending_pattern_title="Access / Endpoint Block — Resolve Before Pacing",
+                    sending_schedule_steps=steps,
                     supporting_evidence=supporting,
                     contradictory_evidence=[],
                     observation_type="direct_headers",
                     limitations=limitations,
-                    explanation="Blocked on request #1. Indicates WAF filtering, IP ban, or missing authentication rather than an ongoing rate counter.",
+                    explanation=explanation,
                 ),
                 RateRecommendations(
                     max_observed_rps=0.0,
@@ -949,43 +1049,61 @@ class RateLimitAnalyzer:
                 supporting.append("No explicit HTTP 429 received, but server enforced progressive delay queuing.")
                 safe_int = max(probe_interval * 2.5, robots_delay or 0.0, 0.75)
                 burst = max(1, min(3, total // 4))
+                rec = self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval))
                 return (
                     PatternClassification(
                         detected_pattern="leaky_bucket",
                         confidence="medium",
-                        confidence_score=0.70,
+                        confidence_score=0.72,
+                        detected_waf=waf_provider,
+                        sending_pattern="sequential_pacing",
+                        sending_pattern_title="Slow Sequential Pacing (Leaky Bucket / Latency Queuing)",
+                        sending_schedule_steps=[
+                            f"Keep concurrency low (max {burst} concurrent request{'s' if burst > 1 else ''}).",
+                            f"Space requests at 1 request every {rec.recommended_interval_sec:.2f}s (~{rec.recommended_rpm:.0f} req/min).",
+                            "Add ±15% random jitter and monitor response latency for queuing spikes.",
+                        ],
                         supporting_evidence=supporting,
                         contradictory_evidence=["Server did not emit explicit 429 status codes."],
                         observation_type="empirical_observations",
                         limitations=limitations,
                         explanation=f"No hard blocks were returned, but {len(throttled)} requests experienced heavy latency queuing under burst.",
                     ),
-                    self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval)),
+                    rec,
                     burst,
                 )
 
             # Header-Guided Rate Limiting (headers present, no blocks triggered)
             if header_limit and header_reset and header_reset > 0:
                 supporting.append(f"Server advertised RateLimit-Limit: {header_limit} and Reset: ~{header_reset}s.")
-                safe_int = max((header_reset / max(header_limit, 1)) * 1.3, robots_delay or 0.0, 0.25)
+                safe_int = max((header_reset / max(header_limit, 1)) * 1.25, robots_delay or 0.0, 0.15)
                 burst = max(1, int(header_limit * 0.75))
+                rec = self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval))
                 return (
                     PatternClassification(
                         detected_pattern="header_guided",
                         confidence="high",
                         confidence_score=0.90,
+                        detected_waf=waf_provider,
+                        sending_pattern="header_quota_pacing",
+                        sending_pattern_title="Header-Guided Quota Pacing",
+                        sending_schedule_steps=[
+                            f"Server allows {header_limit} requests per ~{header_reset:.1f}s window.",
+                            f"Send up to {burst} requests per burst, or pace steadily at 1 request every {rec.recommended_interval_sec:.2f}s (~{rec.recommended_rpm:.0f} req/min).",
+                            "Read X-RateLimit-Remaining on each response and slow down when remaining <= 2.",
+                        ],
                         supporting_evidence=supporting,
                         contradictory_evidence=[],
                         observation_type="direct_headers",
                         limitations=limitations,
                         explanation=f"Probes remained below the server's advertised ceiling of {header_limit} requests per ~{header_reset}s.",
                     ),
-                    self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval)),
+                    rec,
                     burst,
                 )
 
             # No limit observed within budget
-            safe_int = max(probe_interval, robots_delay or 0.0, 0.25)
+            safe_int = max(probe_interval, robots_delay or 0.0, 0.15)
             burst = max(1, min(total, 10))
             is_insufficient = total < 5
             conf = "insufficient" if is_insufficient else "medium"
@@ -996,24 +1114,33 @@ class RateLimitAnalyzer:
             explanation = "No rate limit observed within the tested budget."
             if is_insufficient:
                 limitations.append(f"Sample size ({total} requests) is too small to reliably determine maximum throughput.")
+            rec = self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval), is_provisional=is_insufficient)
             return (
                 PatternClassification(
                     detected_pattern="no_limit_observed",
                     confidence=conf,
                     confidence_score=conf_score,
+                    detected_waf=waf_provider,
+                    sending_pattern="unrestricted_tested",
+                    sending_pattern_title=f"Safe Up To Tested Rate (~{rec.recommended_rps:.1f} req/s)",
+                    sending_schedule_steps=[
+                        f"All {total} probes succeeded at {rec.recommended_interval_sec:.2f}s spacing (~{rec.recommended_rpm:.0f} req/min) with bursts up to {burst}.",
+                        "To discover a higher ceiling, re-run with a larger budget, higher burst size, or shorter delay.",
+                    ],
                     supporting_evidence=supporting,
                     contradictory_evidence=["Probe volume was limited to configured budget; higher throughput might trigger limits."],
                     observation_type="empirical_observations",
                     limitations=limitations,
                     explanation=explanation,
                 ),
-                self._make_recommendations(safe_int, max_obs=1.0 / max(0.05, probe_interval), is_provisional=is_insufficient),
+                rec,
                 burst,
             )
 
         # Case 3: Confirmed rate limiting observed
         allowed_count = max(1, (first_block_idx or 2) - 1)
-        safe_burst = max(1, int(allowed_count * 0.75))
+        effective_limit = header_limit if (header_limit and header_limit > 0) else allowed_count
+        safe_burst = max(1, min(int(effective_limit * 0.75), allowed_count))
         retry_values = [p.retry_after_sec for p in confirmed_rl if p.retry_after_sec is not None]
 
         # Sub-case 3A: Header-Guided (explicit Retry-After or RateLimit headers returned on block)
@@ -1023,19 +1150,28 @@ class RateLimitAnalyzer:
             supporting.append(f"Received explicit Retry-After: {max_retry}s on rate-limit response.")
             if header_limit:
                 supporting.append(f"Server declared RateLimit-Limit: {header_limit}.")
-            safe_int = max((window_est / allowed_count) * 1.3, robots_delay or 0.0, 0.5)
+            safe_int = max((window_est / max(effective_limit, 1)) * 1.25, robots_delay or 0.0, 0.15)
+            rec = self._make_recommendations(safe_int, max_obs=allowed_count / max(0.1, (first_block_idx or 2) * probe_interval))
             return (
                 PatternClassification(
                     detected_pattern="header_guided",
                     confidence="high",
                     confidence_score=0.92,
+                    detected_waf=waf_provider,
+                    sending_pattern="header_quota_pacing",
+                    sending_pattern_title="Header-Guided Quota Pacing",
+                    sending_schedule_steps=[
+                        f"Send up to {safe_burst} requests per burst (limit hit after {allowed_count} requests).",
+                        f"Pace steady traffic at 1 request every {rec.recommended_interval_sec:.2f}s (~{rec.recommended_rpm:.0f} req/min) with ±15% jitter.",
+                        f"On HTTP 429, pause immediately for {max_retry:.1f}s (Retry-After) before resuming.",
+                    ],
                     supporting_evidence=supporting,
                     contradictory_evidence=[],
                     observation_type="direct_headers",
                     limitations=limitations,
                     explanation=f"Throttled after {allowed_count} requests and returned explicit Retry-After: {max_retry}s.",
                 ),
-                self._make_recommendations(safe_int, max_obs=allowed_count / max(0.1, (first_block_idx or 2) * probe_interval)),
+                rec,
                 safe_burst,
             )
 
@@ -1048,19 +1184,28 @@ class RateLimitAnalyzer:
             # Alternating allowed and blocked -> Token Bucket or Sliding Window
             supporting.append(f"Initial burst of {allowed_count} requests permitted.")
             supporting.append("Subsequent requests alternated between blocked and accepted as capacity was replenished.")
-            safe_int = max((cooldown_duration / allowed_count) * 1.25, robots_delay or 0.0, 0.5)
+            safe_int = max((cooldown_duration / max(allowed_count, 1)) * 1.25, robots_delay or 0.0, 0.25)
+            rec = self._make_recommendations(safe_int, max_obs=allowed_count / max(0.1, (first_block_idx or 2) * probe_interval))
             return (
                 PatternClassification(
                     detected_pattern="token_bucket",
                     confidence="high" if len(post_first) >= 4 else "medium",
                     confidence_score=0.82 if len(post_first) >= 4 else 0.65,
+                    detected_waf=waf_provider,
+                    sending_pattern="steady_token_bucket",
+                    sending_pattern_title="Steady Token Bucket Pacing",
+                    sending_schedule_steps=[
+                        f"Initial burst capacity: up to {safe_burst} concurrent requests.",
+                        f"Sustained refill pace: send 1 request every {rec.recommended_interval_sec:.2f}s (~{rec.recommended_rpm:.0f} req/min) with ±15% jitter.",
+                        f"If throttled, wait ~{cooldown_duration:.1f}s for token bucket replenishment.",
+                    ],
                     supporting_evidence=supporting,
                     contradictory_evidence=[],
                     observation_type="empirical_observations",
                     limitations=limitations,
                     explanation=f"Allowed burst of {allowed_count} requests, then alternated with token replenishment. Consistent with a token bucket rate limiter.",
                 ),
-                self._make_recommendations(safe_int, max_obs=allowed_count / max(0.1, (first_block_idx or 2) * probe_interval)),
+                rec,
                 safe_burst,
             )
 
@@ -1071,20 +1216,29 @@ class RateLimitAnalyzer:
         else:
             contradictory.append("Recovery timing could not be verified within duration budget.")
 
-        safe_int = max((cooldown_duration / allowed_count) * 1.3, robots_delay or 0.0, 0.5)
+        safe_int = max((cooldown_duration / max(allowed_count, 1)) * 1.3, robots_delay or 0.0, 0.25)
         conf = "high" if cooldown_stats.recovery_verified else "medium"
+        rec = self._make_recommendations(safe_int, max_obs=allowed_count / max(0.1, (first_block_idx or 2) * probe_interval))
         return (
             PatternClassification(
                 detected_pattern="fixed_window",
                 confidence=conf,
                 confidence_score=0.85 if conf == "high" else 0.65,
+                detected_waf=waf_provider,
+                sending_pattern="burst_then_cooldown",
+                sending_pattern_title="Burst + Window Cooldown (Fixed Window)",
+                sending_schedule_steps=[
+                    f"Option A (Steady): Send 1 request every {rec.recommended_interval_sec:.2f}s (~{rec.recommended_rpm:.0f} req/min) with ±15% jitter.",
+                    f"Option B (Batched): Send bursts of {safe_burst} requests, then pause {cooldown_duration:.1f}s for the window to reset.",
+                    "Avoid sending extra requests once blocked; wait for the full window reset.",
+                ],
                 supporting_evidence=supporting,
                 contradictory_evidence=contradictory,
                 observation_type="empirical_observations",
                 limitations=limitations,
                 explanation=f"Allowed {allowed_count} requests cleanly, then blocked subsequent requests in a solid window until cooldown.",
             ),
-            self._make_recommendations(safe_int, max_obs=allowed_count / max(0.1, (first_block_idx or 2) * probe_interval)),
+            rec,
             safe_burst,
         )
 

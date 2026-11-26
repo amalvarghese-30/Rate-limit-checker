@@ -208,5 +208,20 @@ class RateControlledClient:
     async def get(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
         return await self.request(client, "GET", url, **kwargs)
 
+    async def head(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+        return await self.request(client, "HEAD", url, **kwargs)
+
+    async def post(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+        return await self.request(client, "POST", url, **kwargs)
+
+    async def put(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+        return await self.request(client, "PUT", url, **kwargs)
+
+    async def patch(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+        return await self.request(client, "PATCH", url, **kwargs)
+
+    async def delete(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+        return await self.request(client, "DELETE", url, **kwargs)
+
     async def post(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
         return await self.request(client, "POST", url, **kwargs)

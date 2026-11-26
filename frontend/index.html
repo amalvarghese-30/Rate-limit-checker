@@ -422,9 +422,13 @@
         </div>
         <div>
           <label for="method">Method</label>
-          <select id="method">
+          <select id="method" onchange="onMethodChange()">
             <option value="GET">GET</option>
+            <option value="POST">POST</option>
             <option value="HEAD">HEAD</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
           </select>
         </div>
         <div>
@@ -477,6 +481,24 @@
         <div style="font-size: 11.5px; color: var(--muted); margin-top: 4px;">
           Headers are sanitized for security. Sensitive tokens are masked in profiles and reports.
         </div>
+      </details>
+
+      <details id="body-section" style="margin-top: 10px;">
+        <summary style="cursor: pointer; font-size: 12.5px; font-weight: 500; color: var(--text);">Request Body (for POST / PUT / PATCH)</summary>
+        <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+          <label for="contentType" style="margin:0; font-size: 11.5px;">Content-Type:</label>
+          <select id="contentType" style="width: auto; padding: 4px 8px; font-size: 12px;">
+            <option value="application/json">application/json</option>
+            <option value="application/x-www-form-urlencoded">application/x-www-form-urlencoded</option>
+            <option value="text/plain">text/plain</option>
+          </select>
+          <button type="button" class="preset-btn" onclick="setBodyTemplate()">+ Sample JSON</button>
+          <button type="button" class="preset-btn" onclick="document.getElementById('requestBody').value = ''">Clear</button>
+        </div>
+        <textarea id="requestBody" rows="3" style="margin-top:8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;" placeholder='{
+  "query": "test",
+  "limit": 10
+}'></textarea>
       </details>
     </div>
 
@@ -561,6 +583,13 @@
           </div>
         </div>
         <div class="guide-summary" id="m-summary">-</div>
+        <div id="m-sending-pattern-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 12px 14px; margin-bottom: 14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+            <strong style="font-size: 13px; color: #166534;">Recommended Sending Pattern: <span id="m-sending-title">-</span></strong>
+            <span id="m-waf-badge" class="badge badge-info hidden"></span>
+          </div>
+          <ul id="m-sending-steps" style="margin: 0; padding-left: 18px; font-size: 12.5px; color: #14532d; line-height: 1.55;"></ul>
+        </div>
         <div class="metrics">
           <div class="metric">
             <div class="metric-label">Safe Burst Capacity</div>
@@ -784,6 +813,20 @@
       document.getElementById("burstSize").value = burst;
     }
 
+    function onMethodChange() {
+      const m = document.getElementById("method").value;
+      const bodySec = document.getElementById("body-section");
+      if (bodySec) {
+        bodySec.open = (m === "POST" || m === "PUT" || m === "PATCH");
+      }
+    }
+
+    function setBodyTemplate() {
+      const el = document.getElementById("requestBody");
+      el.value = JSON.stringify({ "query": "test", "page": 1 }, null, 2);
+      el.focus();
+    }
+
     function setHeaderTemplate(type) {
       const el = document.getElementById("customHeaders");
       if (type === 'bearer') {
@@ -902,9 +945,12 @@
         }
       }
 
+      const rawBody = document.getElementById("requestBody") ? document.getElementById("requestBody").value.trim() : "";
       const payload = {
         url: document.getElementById("url").value.trim(),
         method: document.getElementById("method").value,
+        request_body: rawBody ? rawBody : null,
+        content_type: document.getElementById("contentType") ? document.getElementById("contentType").value : "application/json",
         request_budget: parseInt(document.getElementById("maxRequests").value, 10),
         probe_interval_sec: parseFloat(document.getElementById("interval").value),
         burst_size: parseInt(document.getElementById("burstSize").value, 10),
@@ -1110,6 +1156,24 @@
       if (execBurstEl) execBurstEl.value = p.safe_burst_size || 1;
 
       document.getElementById("m-summary").textContent = p.frequency_summary;
+      const sendTitleEl = document.getElementById("m-sending-title");
+      const sendStepsEl = document.getElementById("m-sending-steps");
+      const wafBadgeEl = document.getElementById("m-waf-badge");
+      if (sendTitleEl) sendTitleEl.textContent = p.pattern_classification.sending_pattern_title || p.pattern_classification.detected_pattern;
+      if (wafBadgeEl) {
+        if (p.pattern_classification.detected_waf) {
+          wafBadgeEl.textContent = `Edge/WAF: ${p.pattern_classification.detected_waf}`;
+          wafBadgeEl.classList.remove("hidden");
+        } else {
+          wafBadgeEl.classList.add("hidden");
+        }
+      }
+      if (sendStepsEl) {
+        const steps = p.pattern_classification.sending_schedule_steps || [];
+        sendStepsEl.innerHTML = steps.length
+          ? steps.map(s => `<li>${s}</li>`).join("")
+          : `<li>${p.frequency_summary}</li>`;
+      }
       document.getElementById("m-burst").textContent = `${p.safe_burst_size} req`;
       document.getElementById("m-interval").textContent = `${p.rate_recommendations.recommended_interval_sec}s (${p.rate_recommendations.recommended_interval_ms}ms)`;
       document.getElementById("m-rps").textContent = `${p.rate_recommendations.recommended_rps} req/sec`;
