@@ -35,6 +35,12 @@ store = HistoryStore()
 job_manager = JobManager(store=store)
 pacing_engine = PacingEngine(store=store)
 
+try:
+    from mock_target import app as dummy_app
+    app.mount("/dummy", dummy_app)
+except ImportError:
+    pass
+
 
 # Security Headers Middleware
 @app.middleware("http")
