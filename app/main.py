@@ -213,7 +213,7 @@ async def analyze_stream_legacy(req: AnalyzeRequest):
 
 
 @app.get("/api/history", dependencies=[Depends(verify_api_key)])
-async def history(limit: int = Query(20, ge=1, le=100)):
+async def history(limit: int = Query(25, ge=1)):
     return {"items": store.list_recent(limit=limit)}
 
 
